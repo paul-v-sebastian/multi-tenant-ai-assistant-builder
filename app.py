@@ -242,26 +242,6 @@ _CHAT_JS = """
 <script>
 (function() {
   function init() {
-    // ── Suggestion chips → fill and submit chat input ─────────────────────────
-    document.querySelectorAll('.suggestion-chip').forEach(chip => {
-      chip.addEventListener('click', () => {
-        const txt = chip.dataset.q;
-        const inp = document.querySelector('[data-testid="stChatInputTextArea"]');
-        if (inp) {
-          const nativeSetter = Object.getOwnPropertyDescriptor(
-            window.HTMLTextAreaElement.prototype, 'value').set;
-          nativeSetter.call(inp, txt);
-          inp.dispatchEvent(new Event('input', { bubbles: true }));
-          const form = inp.closest('form');
-          if (form) {
-            const submitBtn = form.querySelector(
-              'button[type="submit"], button[kind="primaryFormSubmit"]');
-            if (submitBtn) submitBtn.click();
-          }
-        }
-      });
-    });
-
     // ── Info icon → toggle metrics popover ────────────────────────────────────
     document.querySelectorAll('.msg-info-btn').forEach(btn => {
       btn.addEventListener('click', e => {
@@ -552,19 +532,34 @@ def main() -> None:
     # ── Chat thread ──────────────────────────────────────────────────────────
     messages = st.session_state.messages
 
+    # Detect whether we are waiting for an assistant reply (last message is user).
+    _pending_response = bool(
+        messages and messages[-1]["role"] == "user"
+    )
+
     if messages:
+        thread_html = '<div class="chat-thread">'
         for msg in messages:
-            with st.chat_message(msg["role"]):
-                st.markdown(msg["content"])
-                if msg.get("sources"):
-                    sources = []
-                    for src in msg["sources"]:
-                        if getattr(src, "page", None) is not None:
-                            sources.append(f"{src.source} · p.{src.page}")
-                        else:
-                            sources.append(f"{src.source} · chunk {src.chunk_index}")
-                    if sources:
-                        st.caption("Sources: " + ", ".join(sources))
+            thread_html += _build_message_html(
+                role=msg["role"],
+                content=msg["content"],
+                sources=msg.get("sources"),
+                metrics=msg.get("metrics"),
+            )
+        # Show typing indicator while RAG pipeline is running
+        if _pending_response:
+            thread_html += (
+                '<div class="msg-row assistant">'
+                '<div class="typing-indicator">'
+                '<div class="typing-dot"></div>'
+                '<div class="typing-dot"></div>'
+                '<div class="typing-dot"></div>'
+                '</div>'
+                '</div>'
+            )
+        thread_html += '</div>'
+        st.markdown(thread_html, unsafe_allow_html=True)
+        st.markdown(_CHAT_JS, unsafe_allow_html=True)
     else:
         # Empty state with suggestion chips
         st.markdown(
@@ -630,42 +625,58 @@ def main() -> None:
                 st.error(str(exc))
 
     # ── Handle query ─────────────────────────────────────────────────────────
-    if question is None:
+    if question is None and not _pending_response:
         return
 
-    question = question.strip()
-    if not question:
-        return
+    if not _pending_response:
+        # First pass: validate, record the user message, then rerun so the
+        # bubble appears immediately (with typing indicator) before the
+        # slow RAG pipeline starts.
+        question = question.strip()
+        if not question:
+            return
+
+        if missing_keys:
+            st.warning("Configure the required API keys before asking questions.")
+            return
+
+        st.session_state.messages.append({"role": "user", "content": question})
+        st.rerun()
+
+    # Second pass (rerun): last message is user → run RAG pipeline and append reply.
+    pending_question = st.session_state.messages[-1]["content"]
 
     if missing_keys:
-        st.warning("Configure the required API keys before asking questions.")
-        return
+        st.session_state.messages.append({
+            "role": "assistant",
+            "content": "⚠️ Configure the required API keys before asking questions.",
+            "sources": [],
+            "metrics": None,
+        })
+        st.rerun()
 
     try:
         embedding_service = build_embedding_service(config)
         llm_service = build_llm_service(config)
         vector_store = build_vector_store(config)
 
-        with st.spinner("Retrieving…"):
-            question_embedding = embedding_service.embed_query(question)
-            retrieval_response = vector_store.query(
-                embedding=question_embedding,
-                namespace=st.session_state.namespace,
-                top_k=config.top_k,
-                min_confidence_score=config.min_confidence_score,
-            )
+        question_embedding = embedding_service.embed_query(pending_question)
+        retrieval_response = vector_store.query(
+            embedding=question_embedding,
+            namespace=st.session_state.namespace,
+            top_k=config.top_k,
+            min_confidence_score=config.min_confidence_score,
+        )
 
         if retrieval_response["relevant_count"] == 0:
             answer = _NO_INFO_PREFIX + " in the uploaded document to answer that question."
         else:
-            with st.spinner("Generating answer…"):
-                answer = llm_service.generate_answer(
-                    question=question,
-                    retrieval_results=retrieval_response["relevant_matches"],
-                    conversation_history=st.session_state.messages,
-                )
+            answer = llm_service.generate_answer(
+                question=pending_question,
+                retrieval_results=retrieval_response["relevant_matches"],
+                conversation_history=st.session_state.messages[:-1],
+            )
 
-        st.session_state.messages.append({"role": "user", "content": question})
         st.session_state.messages.append({
             "role": "assistant",
             "content": answer,
@@ -673,8 +684,14 @@ def main() -> None:
             "metrics": retrieval_response["metrics"],
         })
         st.rerun()
-    except (EmbeddingServiceError, VectorStoreError, LLMServiceError) as exc:
-        st.error(str(exc))
+    except Exception as exc:  # noqa: BLE001
+        st.session_state.messages.append({
+            "role": "assistant",
+            "content": f"⚠️ An error occurred: {exc}",
+            "sources": [],
+            "metrics": None,
+        })
+        st.rerun()
 
 
 main()
