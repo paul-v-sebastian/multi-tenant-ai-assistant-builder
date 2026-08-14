@@ -68,6 +68,34 @@ Required:
 streamlit run app.py
 ```
 
+## CI/CD Workflows
+
+This repository includes three lightweight GitHub Actions workflows:
+
+- `build`: installs dependencies and runs `pytest`
+- `deploy`: runs on pushes to `main` or manual dispatch and records that the repo is ready for Streamlit Community Cloud auto-deploy
+- `health-check`: runs after the deploy workflow succeeds or by manual dispatch, then calls the deployed app URL and verifies the response contains `PDF RAG Chatbot`
+
+### Streamlit Community Cloud Setup
+
+1. In Streamlit Community Cloud, create an app connected to this repository.
+2. Select the branch to deploy and use `app.py` as the entry point.
+3. Add these app secrets in the Streamlit dashboard:
+
+- `OPENAI_API_KEY`
+- `PINECONE_API_KEY`
+- `PINECONE_INDEX_NAME` (optional, defaults to `pdf-rag-index`)
+
+The app reads these values from local environment variables, `.env`, or Streamlit secrets.
+
+### GitHub Repository Variable
+
+Set this repository variable after your Community Cloud app has a public URL:
+
+- `STREAMLIT_APP_URL`
+
+This variable is used by the `health-check` workflow and does not need to be stored as a secret.
+
 ## RAG Configuration
 
 - Chunk size: 200 words

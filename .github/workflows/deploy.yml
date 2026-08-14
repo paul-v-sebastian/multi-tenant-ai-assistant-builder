@@ -1,0 +1,39 @@
+name: Deploy
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: test
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Validate Streamlit app files
+        run: |
+          test -f app.py
+          test -f requirements.txt
+
+      - name: Publish deployment summary
+        run: |
+          {
+            echo "## Streamlit Community Cloud deployment"
+            echo
+            echo "- This repository is ready for Streamlit Community Cloud."
+            echo "- Community Cloud deploys automatically after pushes to the connected branch."
+            echo "- Configure app secrets in the Streamlit dashboard before the first run:"
+            echo "  - \`OPENAI_API_KEY\`"
+            echo "  - \`PINECONE_API_KEY\`"
+            echo "  - \`PINECONE_INDEX_NAME\` (optional; defaults to \`pdf-rag-index\`)"
+            echo "- After the app is created, set the GitHub repository variable \`STREAMLIT_APP_URL\` for the health-check workflow."
+          } >> "$GITHUB_STEP_SUMMARY"

@@ -1,0 +1,42 @@
+name: Health Check
+
+on:
+  workflow_dispatch:
+  workflow_run:
+    workflows: ["Deploy"]
+    types:
+      - completed
+
+permissions: {}
+
+jobs:
+  health-check:
+    if: >
+      github.event_name == 'workflow_dispatch' ||
+      github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    environment:
+      name: test
+
+    steps:
+      - name: Require app URL
+        env:
+          APP_URL: ${{ vars.STREAMLIT_APP_URL }}
+        run: |
+          if [ -z "$APP_URL" ]; then
+            echo "Repository variable STREAMLIT_APP_URL is required for health checks." >&2
+            exit 1
+          fi
+
+      - name: Check deployed app
+        env:
+          APP_URL: ${{ vars.STREAMLIT_APP_URL }}
+        run: |
+          response_file="$(mktemp)"
+          trap 'rm -f "$response_file"' EXIT
+          curl --fail --show-error --silent \
+            --retry 5 \
+            --retry-connrefused \
+            --retry-delay 5 \
+            "$APP_URL" > "$response_file"
+          grep -q "PDF RAG Chatbot" "$response_file"

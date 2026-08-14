@@ -5,6 +5,11 @@ from dataclasses import dataclass, replace
 
 from dotenv import load_dotenv
 
+try:
+    import streamlit as st
+except Exception:  # pragma: no cover - defensive import for non-Streamlit contexts
+    st = None
+
 
 load_dotenv()
 
@@ -29,9 +34,21 @@ class AppConfig:
 
 
 def load_config() -> AppConfig:
-    return AppConfig(
-        openai_api_key=os.getenv("OPENAI_API_KEY", ""),
-        pinecone_api_key=os.getenv("PINECONE_API_KEY", ""),
-        pinecone_index_name=os.getenv("PINECONE_INDEX_NAME", "pdf-rag-index"),
-    )
+    def read_secret(name: str, default: str = "") -> str:
+        value = os.getenv(name)
+        if value:
+            return value
+        if st is not None:
+            try:
+                secret_value = st.secrets.get(name)
+            except Exception:
+                secret_value = None
+            if secret_value:
+                return str(secret_value)
+        return default
 
+    return AppConfig(
+        openai_api_key=read_secret("OPENAI_API_KEY"),
+        pinecone_api_key=read_secret("PINECONE_API_KEY"),
+        pinecone_index_name=read_secret("PINECONE_INDEX_NAME", "pdf-rag-index"),
+    )
