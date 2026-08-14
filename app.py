@@ -361,10 +361,7 @@ def initialize_state(config: AppConfig) -> None:
         "chunk_count": 0,
         "last_ingested_index": None,
         "pending_suggestion": None,
-        # Settings overrides — seeded from env/config on first load
-        "cfg_index": config.pinecone_index_name,
-        "cfg_topk": config.top_k,
-        "cfg_conf": float(config.min_confidence_score),
+
     }
     for key, value in defaults.items():
         st.session_state.setdefault(key, value)
@@ -389,12 +386,6 @@ def _remove_document() -> None:
 
 @st.dialog("⚙️ Settings")
 def settings_dialog() -> None:
-    st.text_input("Index name", key="cfg_index")
-    st.number_input("Top K", min_value=1, max_value=10, step=1, key="cfg_topk")
-    st.slider("Min confidence", min_value=0.0, max_value=1.0, step=0.01, key="cfg_conf")
-
-    st.divider()
-
     if st.button("🗑 Clear conversation", key="dlg_clear_btn"):
         clear_conversation()
         st.rerun()
@@ -604,12 +595,6 @@ def main() -> None:
     config = load_config()
     initialize_state(config)
 
-    # ── Apply session overrides to config ────────────────────────────────────
-    config = config.with_overrides(
-        pinecone_index_name=st.session_state.get("cfg_index", config.pinecone_index_name),
-        top_k=int(st.session_state.get("cfg_topk", config.top_k)),
-        min_confidence_score=float(st.session_state.get("cfg_conf", config.min_confidence_score)),
-    )
 
     missing_keys: list[str] = []
     if not config.openai_api_key:

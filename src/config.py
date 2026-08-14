@@ -22,7 +22,7 @@ class AppConfig:
     chunk_size_words: int = 200
     chunk_overlap_words: int = 40
     top_k: int = 3
-    min_confidence_score: float = 0.80
+    min_confidence_score: float = 0.60
     embedding_model: str = "text-embedding-3-small"
     embedding_dimension: int = 1536
     llm_model: str = "gpt-4o-mini"
