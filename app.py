@@ -58,47 +58,14 @@ footer { display: none !important; }
 * { box-sizing: border-box; }
 body, .stApp { background: var(--bg) !important; font-family: var(--font); }
 
-/* ── Fixed top bar (pure HTML, no Streamlit widgets) ─────────────────────── */
-.app-header {
-  position: fixed; top: 0; left: 0; right: 0;
-  height: var(--header-h); z-index: 200;
-  display: flex; align-items: center;
-  padding: 0 20px; gap: 12px;
-  background: var(--surface);
-  border-bottom: 1px solid var(--border);
-}
-.app-title {
-  flex: 1;
-  font-size: 16px; font-weight: 700; color: var(--text);
-}
-.app-gear-btn {
-  background: none; border: 1px solid var(--border);
-  border-radius: 8px; padding: 6px 10px;
-  cursor: pointer; font-size: 18px; color: var(--text-muted);
-  line-height: 1;
-  transition: background .15s, color .15s, border-color .15s;
-}
-.app-gear-btn:hover { background: var(--accent-light); color: var(--accent); border-color: var(--accent); }
-
 /* ── Push Streamlit content below fixed header ───────────────────────────── */
 .stMainBlockContainer {
-  padding-top: calc(var(--header-h) + 20px) !important;
+  padding-top: 20px !important;
   padding-bottom: 120px !important;
   max-width: 820px !important;
   margin: 0 auto !important;
   padding-left: 20px !important;
   padding-right: 20px !important;
-}
-
-/* ── Hidden trigger wrappers for JS-driven Streamlit buttons ─────────────── */
-#gear-hidden-wrap,
-#remove-doc-hidden-wrap {
-  position: fixed;
-  top: -200px; left: -200px;
-  width: 1px; height: 1px;
-  overflow: hidden;
-  pointer-events: none;
-  opacity: 0;
 }
 
 /* ── Chat thread ──────────────────────────────────────────────────────────── */
@@ -295,26 +262,6 @@ _CHAT_JS = """
       });
     });
 
-    // ── Gear icon → trigger hidden Streamlit button ───────────────────────────
-    document.getElementById('gear-icon-btn')?.addEventListener('click', () => {
-      const wrap = document.getElementById('gear-hidden-wrap');
-      if (wrap) {
-        const btn = wrap.querySelector('button');
-        if (btn) btn.click();
-      }
-    });
-
-    // ── File chip remove → trigger hidden Streamlit button ────────────────────
-    document.querySelectorAll('.file-chip-remove').forEach(el => {
-      el.addEventListener('click', () => {
-        const wrap = document.getElementById('remove-doc-hidden-wrap');
-        if (wrap) {
-          const btn = wrap.querySelector('button');
-          if (btn) btn.click();
-        }
-      });
-    });
-
     // ── Info icon → toggle metrics popover ────────────────────────────────────
     document.querySelectorAll('.msg-info-btn').forEach(btn => {
       btn.addEventListener('click', e => {
@@ -378,27 +325,6 @@ def _remove_document() -> None:
     st.session_state.chunk_count = 0
     st.session_state.last_ingested_index = None
     clear_conversation()
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Settings dialog  (must be module-level for @st.dialog)
-# ─────────────────────────────────────────────────────────────────────────────
-
-@st.dialog("⚙️ Settings")
-def settings_dialog() -> None:
-    if st.button("🗑 Clear conversation", key="dlg_clear_btn"):
-        clear_conversation()
-        st.rerun()
-
-    doc_name = st.session_state.get("document_name")
-    if doc_name:
-        st.markdown("**Uploaded document**")
-        chunk_count = st.session_state.get("chunk_count", 0)
-        st.markdown(f"📄 **{doc_name}** &nbsp;·&nbsp; {chunk_count} chunks",
-                    unsafe_allow_html=True)
-        if st.button("Remove document", key="dlg_remove_doc_btn"):
-            _remove_document()
-            st.rerun()
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -605,23 +531,6 @@ def main() -> None:
     # ── Inject global CSS ────────────────────────────────────────────────────
     st.markdown(_GLOBAL_CSS, unsafe_allow_html=True)
 
-    # ── Fixed top bar (HTML only — gear click triggers hidden Streamlit btn) ─
-    st.markdown(
-        '<div class="app-header">'
-        '<span class="app-title">💬 RAG Chat</span>'
-        '<button class="app-gear-btn" id="gear-icon-btn" title="Settings">⚙️</button>'
-        '</div>',
-        unsafe_allow_html=True,
-    )
-
-    # ── Hidden Streamlit button — triggered by the gear icon via JS ──────────
-    st.markdown('<div id="gear-hidden-wrap">', unsafe_allow_html=True)
-    gear_clicked = st.button("⚙", key="gear_toggle_btn", label_visibility="collapsed")
-    st.markdown('</div>', unsafe_allow_html=True)
-
-    if gear_clicked:
-        settings_dialog()
-
     # ── API key warning ──────────────────────────────────────────────────────
     if missing_keys:
         st.markdown(
@@ -670,13 +579,6 @@ def main() -> None:
 
     if doc_name:
         st.markdown(_build_file_chip_html(doc_name, chunk_count), unsafe_allow_html=True)
-        # Hidden Streamlit button for the × on the chip
-        st.markdown('<div id="remove-doc-hidden-wrap">', unsafe_allow_html=True)
-        remove_clicked = st.button("✕", key="remove_doc_btn", label_visibility="collapsed")
-        st.markdown('</div>', unsafe_allow_html=True)
-        if remove_clicked:
-            _remove_document()
-            st.rerun()
 
     # ── File uploader (compact; appears just above chat input) ───────────────
     upload_label = "📎 Replace PDF" if doc_name else "📎 Attach PDF"
