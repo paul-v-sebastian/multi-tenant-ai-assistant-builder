@@ -22,7 +22,6 @@ _GLOBAL_CSS = """
 <style>
 /* ── Reset Streamlit chrome ───────────────────────────────────────────────── */
 [data-testid="stSidebar"] { display: none !important; }
-[data-testid="stAppViewContainer"] > section:first-child { display: none !important; }
 .block-container { padding: 0 !important; max-width: 100% !important; }
 header[data-testid="stHeader"] { display: none !important; }
 footer { display: none !important; }
