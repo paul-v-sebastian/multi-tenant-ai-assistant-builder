@@ -288,6 +288,28 @@ def clear_conversation() -> None:
     st.session_state.messages = []
 
 
+def show_chat_error(exc: Exception) -> None:
+    """Render a user-visible error and persist it to the chat transcript."""
+    error_message = f"⚠️ An error occurred: {exc}"
+    st.error(error_message)
+
+    state = st.session_state
+    messages = state.get("messages") if isinstance(state, dict) else getattr(state, "messages", None)
+    if messages is None:
+        if isinstance(state, dict):
+            state["messages"] = []
+            messages = state["messages"]
+        else:
+            state.messages = []
+            messages = state.messages
+    messages.append({
+        "role": "assistant",
+        "content": error_message,
+        "sources": [],
+        "metrics": None,
+    })
+
+
 def is_chat_ready(state: dict | None = None) -> bool:
     """A document is ready to chat once it is uploaded and indexed."""
     if state is None:
@@ -662,12 +684,7 @@ def main() -> None:
         })
         st.rerun()
     except Exception as exc:  # noqa: BLE001
-        st.session_state.messages.append({
-            "role": "assistant",
-            "content": f"⚠️ An error occurred: {exc}",
-            "sources": [],
-            "metrics": None,
-        })
+        show_chat_error(exc)
         st.rerun()
 
 
