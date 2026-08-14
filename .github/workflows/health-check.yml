@@ -19,16 +19,20 @@ jobs:
       name: test
 
     steps:
-      - name: Require app URL
+      - name: Check app URL is configured
         env:
           APP_URL: ${{ vars.STREAMLIT_APP_URL }}
         run: |
           if [ -z "$APP_URL" ]; then
-            echo "Repository variable STREAMLIT_APP_URL is required for health checks." >&2
-            exit 1
+            echo "::warning::Repository variable STREAMLIT_APP_URL is not set; skipping health check."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
           fi
+        id: check_url
 
       - name: Check deployed app
+        if: steps.check_url.outputs.skip != 'true'
         env:
           APP_URL: ${{ vars.STREAMLIT_APP_URL }}
         run: |
