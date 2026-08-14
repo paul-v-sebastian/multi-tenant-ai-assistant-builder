@@ -608,7 +608,7 @@ def main() -> None:
         question = st.session_state.pending_question
         st.session_state.pending_question = None
     else:
-        question = st.chat_input(placeholder, disabled=not source_ready, key="chat_input")
+        question = st.chat_input(placeholder, key="chat_input")
 
     # ── Handle file upload ───────────────────────────────────────────────────
     if uploaded_file is not None:
@@ -640,6 +640,10 @@ def main() -> None:
             st.warning("Configure the required API keys before asking questions.")
             return
 
+        if not source_ready:
+            st.warning("Please upload a PDF document first before asking questions.")
+            return
+
         st.session_state.messages.append({"role": "user", "content": question})
         st.rerun()
 
@@ -650,6 +654,15 @@ def main() -> None:
         st.session_state.messages.append({
             "role": "assistant",
             "content": "⚠️ Configure the required API keys before asking questions.",
+            "sources": [],
+            "metrics": None,
+        })
+        st.rerun()
+
+    if not st.session_state.namespace:
+        st.session_state.messages.append({
+            "role": "assistant",
+            "content": "⚠️ No document is loaded. Please upload a PDF before asking questions.",
             "sources": [],
             "metrics": None,
         })
