@@ -94,7 +94,7 @@ class PineconeVectorStore:
         except Exception as exc:  # pragma: no cover - SDK errors vary
             raise VectorStoreError(f"Failed to query Pinecone: {exc}") from exc
 
-        response_matches = response.get("matches", []) if isinstance(response, dict) else getattr(response, "matches", [])
+        response_matches = (response.get("matches") or []) if isinstance(response, dict) else (getattr(response, "matches", None) or [])
         matches = [
             RetrievedChunk(
                 chunk_id=_get_match_value(match, "id", ""),
