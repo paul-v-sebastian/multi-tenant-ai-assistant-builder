@@ -14,15 +14,6 @@ from src.vector_store import PineconeVectorStore, VectorStoreError
 # ── Sentinel prefix used to detect "no relevant info" answers ─────────────────
 _NO_INFO_PREFIX = "I could not find enough relevant information"
 
-# ── Suggested prompts shown in the empty chat state ──────────────────────────
-_SUGGESTION_CHIPS = [
-    "What is the main topic?",
-    "Summarize this document",
-    "What are the key findings?",
-    "List the conclusions",
-]
-
-
 # ─────────────────────────────────────────────────────────────────────────────
 # CSS / JS injection
 # ─────────────────────────────────────────────────────────────────────────────
@@ -561,25 +552,16 @@ def main() -> None:
         st.markdown(thread_html, unsafe_allow_html=True)
         st.markdown(_CHAT_JS, unsafe_allow_html=True)
     else:
-        # Empty state with suggestion chips
         st.markdown(
             '<div class="empty-state">'
             '<div class="empty-state-icon">💬</div>'
             '<div class="empty-state-heading">Ask about your document</div>'
             '<div class="empty-state-sub">'
-            'Attach a PDF with the 📎 button below, then ask a question.'
+            'Upload a PDF, then ask a question about it.'
             '</div>'
             '</div>',
             unsafe_allow_html=True,
         )
-        suggestion_question = None
-        for q in _SUGGESTION_CHIPS:
-            suggestion_key = f"suggestion_{hashlib.sha256(q.encode()).hexdigest()[:12]}"
-            if st.button(q, key=suggestion_key, use_container_width=True):
-                suggestion_question = q
-                break
-        if suggestion_question:
-            st.session_state.pending_question = suggestion_question
 
     # ── File attachment chip + remove (when a doc is loaded) ─────────────────
     doc_name = st.session_state.document_name
@@ -589,7 +571,7 @@ def main() -> None:
         st.markdown(_build_file_chip_html(doc_name, chunk_count), unsafe_allow_html=True)
 
     # ── File uploader (compact; appears just above chat input) ───────────────
-    upload_label = "📎 Replace PDF" if doc_name else "📎 Attach PDF"
+    upload_label = "📎 Attach PDF"
     uploaded_file = st.file_uploader(
         upload_label,
         type=["pdf"],
@@ -604,11 +586,7 @@ def main() -> None:
         if source_ready
         else "Attach a PDF first to start chatting…"
     )
-    if "pending_question" in st.session_state and st.session_state.pending_question:
-        question = st.session_state.pending_question
-        st.session_state.pending_question = None
-    else:
-        question = st.chat_input(placeholder, disabled=not source_ready, key="chat_input")
+    question = st.chat_input(placeholder, disabled=not source_ready, key="chat_input")
 
     # ── Handle file upload ───────────────────────────────────────────────────
     if uploaded_file is not None:
