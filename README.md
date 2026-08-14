@@ -73,32 +73,28 @@ streamlit run app.py
 This repository includes three lightweight GitHub Actions workflows:
 
 - `build`: installs dependencies and runs `pytest`
-- `deploy`: runs on pushes to `main` or manual dispatch, copies the current code to a test host over SSH, refreshes `.env`, installs dependencies, and runs a restart command
+- `deploy`: runs on pushes to `main` or manual dispatch and records that the repo is ready for Streamlit Community Cloud auto-deploy
 - `health-check`: runs after the deploy workflow succeeds or by manual dispatch, then calls the deployed app URL and verifies the response contains `PDF RAG Chatbot`
 
-### Required GitHub Actions Secrets
+### Streamlit Community Cloud Setup
 
-Create these repository or environment secrets before enabling deployment:
+1. In Streamlit Community Cloud, create an app connected to this repository.
+2. Select the branch to deploy and use `app.py` as the entry point.
+3. Add these app secrets in the Streamlit dashboard:
 
-- `TEST_DEPLOY_HOST`
-- `TEST_DEPLOY_USER`
-- `TEST_DEPLOY_PORT` (optional, defaults to `22`)
-- `TEST_DEPLOY_PATH`
-- `TEST_DEPLOY_SSH_PRIVATE_KEY`
-- `TEST_DEPLOY_SSH_KNOWN_HOSTS`
-- `TEST_DEPLOY_RESTART_COMMAND`
-- `TEST_APP_URL`
 - `OPENAI_API_KEY`
 - `PINECONE_API_KEY`
-- `PINECONE_INDEX_NAME`
+- `PINECONE_INDEX_NAME` (optional, defaults to `pdf-rag-index`)
 
-### Test Host Expectations
+The app reads these values from local environment variables, `.env`, or Streamlit secrets.
 
-The test environment should already have:
+### GitHub Repository Variable
 
-- SSH access for the configured deploy user
-- Python 3 available as `python3`
-- a restart command that brings the Streamlit app back up after files are synced
+Set this repository variable after your Community Cloud app has a public URL:
+
+- `STREAMLIT_APP_URL`
+
+This variable is used by the `health-check` workflow and does not need to be stored as a secret.
 
 ## RAG Configuration
 

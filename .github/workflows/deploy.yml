@@ -19,57 +19,21 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v4
 
-      - name: Configure SSH
-        env:
-          SSH_PRIVATE_KEY: ${{ secrets.TEST_DEPLOY_SSH_PRIVATE_KEY }}
-          SSH_KNOWN_HOSTS: ${{ secrets.TEST_DEPLOY_SSH_KNOWN_HOSTS }}
+      - name: Validate Streamlit app files
         run: |
-          install -m 700 -d ~/.ssh
-          printf '%s\n' "$SSH_PRIVATE_KEY" > ~/.ssh/id_ed25519
-          chmod 600 ~/.ssh/id_ed25519
-          printf '%s\n' "$SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts
-          chmod 644 ~/.ssh/known_hosts
+          test -f app.py
+          test -f requirements.txt
 
-      - name: Sync application files
-        env:
-          DEPLOY_HOST: ${{ secrets.TEST_DEPLOY_HOST }}
-          DEPLOY_PATH: ${{ secrets.TEST_DEPLOY_PATH }}
-          DEPLOY_PORT: ${{ secrets.TEST_DEPLOY_PORT }}
-          DEPLOY_USER: ${{ secrets.TEST_DEPLOY_USER }}
+      - name: Publish deployment summary
         run: |
-          ssh -p "${DEPLOY_PORT:-22}" "${DEPLOY_USER}@${DEPLOY_HOST}" "mkdir -p '${DEPLOY_PATH}'"
-          rsync -az --delete \
-            --exclude '.git/' \
-            --exclude '.github/' \
-            --exclude '.venv/' \
-            --exclude '__pycache__/' \
-            -e "ssh -p ${DEPLOY_PORT:-22}" \
-            ./ "${DEPLOY_USER}@${DEPLOY_HOST}:${DEPLOY_PATH}/"
-
-      - name: Install dependencies and restart app
-        env:
-          DEPLOY_HOST: ${{ secrets.TEST_DEPLOY_HOST }}
-          DEPLOY_PATH: ${{ secrets.TEST_DEPLOY_PATH }}
-          DEPLOY_PORT: ${{ secrets.TEST_DEPLOY_PORT }}
-          DEPLOY_USER: ${{ secrets.TEST_DEPLOY_USER }}
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          PINECONE_API_KEY: ${{ secrets.PINECONE_API_KEY }}
-          PINECONE_INDEX_NAME: ${{ secrets.PINECONE_INDEX_NAME }}
-          RESTART_COMMAND: ${{ secrets.TEST_DEPLOY_RESTART_COMMAND }}
-        run: |
-          ssh -p "${DEPLOY_PORT:-22}" "${DEPLOY_USER}@${DEPLOY_HOST}" \
-            "export APP_DIR='${DEPLOY_PATH}' OPENAI_API_KEY='${OPENAI_API_KEY}' PINECONE_API_KEY='${PINECONE_API_KEY}' PINECONE_INDEX_NAME='${PINECONE_INDEX_NAME}' RESTART_COMMAND='${RESTART_COMMAND}'; bash -se" <<'EOF'
-          set -euo pipefail
-          cd "$APP_DIR"
-          python3 -m venv .venv
-          . .venv/bin/activate
-          pip install --upgrade pip
-          pip install -r requirements.txt
-          cat > .env <<ENVVARS
-          OPENAI_API_KEY=$OPENAI_API_KEY
-          PINECONE_API_KEY=$PINECONE_API_KEY
-          PINECONE_INDEX_NAME=$PINECONE_INDEX_NAME
-          ENVVARS
-          chmod 600 .env
-          eval "$RESTART_COMMAND"
-          EOF
+          {
+            echo "## Streamlit Community Cloud deployment"
+            echo
+            echo "- This repository is ready for Streamlit Community Cloud."
+            echo "- Community Cloud deploys automatically after pushes to the connected branch."
+            echo "- Configure app secrets in the Streamlit dashboard before the first run:"
+            echo "  - \`OPENAI_API_KEY\`"
+            echo "  - \`PINECONE_API_KEY\`"
+            echo "  - \`PINECONE_INDEX_NAME\` (optional; defaults to \`pdf-rag-index\`)"
+            echo "- After the app is created, set the GitHub repository variable \`STREAMLIT_APP_URL\` for the health-check workflow."
+          } >> "$GITHUB_STEP_SUMMARY"
