@@ -8,7 +8,7 @@ from src.config import AppConfig, load_config
 from src.embeddings import EmbeddingService, EmbeddingServiceError
 from src.llm import LLMService, LLMServiceError
 from src.pdf_processor import PDFProcessingError, build_chunks, extract_pdf_pages
-from src.retrieval import format_citation, format_metrics_for_display
+from src.retrieval import format_metrics_for_display
 from src.vector_store import PineconeVectorStore, VectorStoreError
 
 # ── Sentinel prefix used to detect "no relevant info" answers ─────────────────
@@ -16,9 +16,9 @@ _NO_INFO_PREFIX = "I could not find enough relevant information"
 
 # ── Suggested prompts shown in the empty chat state ──────────────────────────
 _SUGGESTION_CHIPS = [
+    "What is the main topic?",
     "Summarize this document",
     "What are the key findings?",
-    "What is the main topic?",
     "List the conclusions",
 ]
 
@@ -36,206 +36,213 @@ _GLOBAL_CSS = """
 header[data-testid="stHeader"] { display: none !important; }
 footer { display: none !important; }
 #MainMenu { display: none !important; }
+.stMainBlockContainer { max-width: 100% !important; padding: 0 !important; }
 
 /* ── Root vars ────────────────────────────────────────────────────────────── */
 :root {
-  --bg:        #f8f9fb;
-  --surface:   #ffffff;
-  --border:    #e2e4e9;
-  --text:      #1a1d23;
-  --text-muted:#6b7280;
-  --accent:    #4f6ef7;
-  --accent-light: #eef0fd;
-  --danger:    #dc2626;
-  --warn-bg:   #fef9ec;
-  --warn-border:#f59e0b;
-  --radius:    10px;
-  --pane-left-w:  280px;
-  --pane-right-w: 300px;
-  --pane-rail-w:  52px;
-  --transition:   220ms ease;
+  --bg:          #f8f9fb;
+  --surface:     #ffffff;
+  --border:      #e2e4e9;
+  --text:        #1a1d23;
+  --text-muted:  #6b7280;
+  --accent:      #4f6ef7;
+  --accent-light:#eef0fd;
+  --danger:      #dc2626;
+  --warn-bg:     #fef9ec;
+  --warn-border: #f59e0b;
+  --radius:      10px;
+  --header-h:    56px;
   --font: "Inter", "Segoe UI", system-ui, sans-serif;
 }
 
 * { box-sizing: border-box; }
-
 body, .stApp { background: var(--bg) !important; font-family: var(--font); }
 
-/* ── 3-pane shell ─────────────────────────────────────────────────────────── */
-.rag-shell {
-  display: flex;
-  height: 100vh;
-  overflow: hidden;
-  background: var(--bg);
-}
-
-/* ── Side pane shared ─────────────────────────────────────────────────────── */
-.rag-pane {
-  display: flex;
-  flex-direction: column;
+/* ── Fixed top bar (pure HTML, no Streamlit widgets) ─────────────────────── */
+.app-header {
+  position: fixed; top: 0; left: 0; right: 0;
+  height: var(--header-h); z-index: 200;
+  display: flex; align-items: center;
+  padding: 0 20px; gap: 12px;
   background: var(--surface);
-  border-right: 1px solid var(--border);
-  transition: width var(--transition);
-  overflow: hidden;
-  flex-shrink: 0;
-}
-.rag-pane-right {
-  border-right: none;
-  border-left: 1px solid var(--border);
-}
-.rag-pane.collapsed { width: var(--pane-rail-w) !important; }
-.rag-pane-left  { width: var(--pane-left-w); }
-.rag-pane-right { width: var(--pane-right-w); }
-
-.pane-header {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 14px 12px 10px;
   border-bottom: 1px solid var(--border);
-  min-height: 52px;
-  flex-shrink: 0;
 }
-.pane-header-icon { font-size: 18px; flex-shrink: 0; }
-.pane-header-title {
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--text);
-  letter-spacing: .3px;
-  white-space: nowrap;
+.app-title {
   flex: 1;
+  font-size: 16px; font-weight: 700; color: var(--text);
 }
-.pane-collapse-btn {
-  background: none;
-  border: none;
-  cursor: pointer;
-  color: var(--text-muted);
-  font-size: 16px;
-  padding: 2px 4px;
-  border-radius: 4px;
-  flex-shrink: 0;
+.app-gear-btn {
+  background: none; border: 1px solid var(--border);
+  border-radius: 8px; padding: 6px 10px;
+  cursor: pointer; font-size: 18px; color: var(--text-muted);
   line-height: 1;
+  transition: background .15s, color .15s, border-color .15s;
 }
-.pane-collapse-btn:hover { background: var(--accent-light); color: var(--accent); }
-.pane-body {
-  flex: 1;
-  overflow-y: auto;
-  overflow-x: hidden;
-  padding: 12px;
-}
-.collapsed .pane-header-title,
-.collapsed .pane-body { display: none; }
-.collapsed .pane-header { justify-content: center; padding: 14px 0 10px; border-bottom: 1px solid var(--border); }
-.rail-badge {
-  display: none;
-  position: absolute;
-  top: 6px; right: 4px;
-  background: var(--accent);
-  color: #fff;
-  font-size: 9px;
-  border-radius: 99px;
-  padding: 1px 4px;
-  font-weight: 700;
-}
-.collapsed .rail-badge { display: block; }
-.pane-header { position: relative; }
+.app-gear-btn:hover { background: var(--accent-light); color: var(--accent); border-color: var(--accent); }
 
-/* ── Center pane ──────────────────────────────────────────────────────────── */
-.rag-center {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
+/* ── Push Streamlit content below fixed header ───────────────────────────── */
+.stMainBlockContainer {
+  padding-top: calc(var(--header-h) + 20px) !important;
+  padding-bottom: 120px !important;
+  max-width: 820px !important;
+  margin: 0 auto !important;
+  padding-left: 20px !important;
+  padding-right: 20px !important;
+}
+
+/* ── Hidden trigger wrappers for JS-driven Streamlit buttons ─────────────── */
+#gear-hidden-wrap,
+#remove-doc-hidden-wrap {
+  position: fixed;
+  top: -200px; left: -200px;
+  width: 1px; height: 1px;
   overflow: hidden;
-  min-width: 0;
-  background: var(--bg);
-}
-.center-header {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 14px 20px 10px;
-  border-bottom: 1px solid var(--border);
-  background: var(--surface);
-  min-height: 52px;
-  flex-shrink: 0;
-}
-.center-header-title {
-  font-size: 14px;
-  font-weight: 700;
-  color: var(--text);
-  flex: 1;
+  pointer-events: none;
+  opacity: 0;
 }
 
 /* ── Chat thread ──────────────────────────────────────────────────────────── */
-.chat-thread {
-  flex: 1;
-  overflow-y: auto;
-  padding: 20px;
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-}
+.chat-thread { display: flex; flex-direction: column; gap: 16px; }
+
+/* ── Message rows ─────────────────────────────────────────────────────────── */
 .msg-row { display: flex; }
-.msg-row.user { justify-content: flex-end; }
-.msg-row.assistant { justify-content: flex-start; }
+.msg-row.user  { justify-content: flex-end; }
+.msg-row.assistant { justify-content: flex-start; align-items: flex-start; gap: 8px; }
 .msg-bubble {
-  max-width: 72%;
-  padding: 12px 16px;
+  max-width: 72%; padding: 12px 16px;
   border-radius: var(--radius);
-  font-size: 14px;
-  line-height: 1.6;
-  word-break: break-word;
+  font-size: 14px; line-height: 1.6; word-break: break-word;
 }
 .msg-row.user .msg-bubble {
-  background: var(--accent);
-  color: #fff;
+  background: var(--accent); color: #fff;
   border-bottom-right-radius: 3px;
 }
 .msg-row.assistant .msg-bubble {
-  background: var(--surface);
-  color: var(--text);
+  background: var(--surface); color: var(--text);
   border: 1px solid var(--border);
   border-bottom-left-radius: 3px;
+  flex: 1; max-width: 100%;
 }
 .msg-bubble.no-info {
-  background: var(--warn-bg);
-  border-color: var(--warn-border);
-  color: #92400e;
+  background: var(--warn-bg); border-color: var(--warn-border); color: #92400e;
 }
 
 /* ── Citation chips ───────────────────────────────────────────────────────── */
-.citations-row { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.citations-row { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
 .citation-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  background: var(--accent-light);
-  color: var(--accent);
-  border: 1px solid #c7d0fb;
-  border-radius: 99px;
-  padding: 2px 10px;
-  font-size: 11px;
-  font-weight: 600;
-  cursor: pointer;
-  white-space: nowrap;
+  position: relative;
+  display: inline-flex; align-items: center; gap: 4px;
+  background: var(--accent-light); color: var(--accent);
+  border: 1px solid #c7d0fb; border-radius: 99px;
+  padding: 3px 10px; font-size: 11px; font-weight: 600;
+  cursor: default; white-space: nowrap;
+  transition: background .15s, color .15s;
 }
-.citation-chip:hover { background: var(--accent); color: #fff; }
+.citation-chip:hover { background: var(--accent); color: #fff; border-color: var(--accent); }
+
+/* Hover tooltip via CSS ::after (no JS needed) */
+.citation-chip[data-tooltip]:hover::after {
+  content: attr(data-tooltip);
+  position: absolute; bottom: calc(100% + 8px); left: 50%;
+  transform: translateX(-50%);
+  background: #1a1d23; color: #fff;
+  padding: 8px 12px; border-radius: 8px;
+  font-size: 12px; line-height: 1.5; font-weight: 400;
+  white-space: pre-wrap; max-width: 300px; min-width: 160px;
+  box-shadow: 0 4px 16px rgba(0,0,0,.2);
+  z-index: 500; pointer-events: none;
+  text-align: left;
+}
+.citation-chip[data-tooltip]:hover::before {
+  content: '';
+  position: absolute; bottom: calc(100% + 2px); left: 50%;
+  transform: translateX(-50%);
+  border: 6px solid transparent; border-top-color: #1a1d23;
+  z-index: 500; pointer-events: none;
+}
+
+/* ── Info icon & metrics popover ──────────────────────────────────────────── */
+.msg-info-wrap {
+  position: relative;
+  display: inline-flex; align-items: flex-start;
+  margin-top: 2px; flex-shrink: 0;
+}
+.msg-info-btn {
+  background: none; border: 1px solid var(--border);
+  border-radius: 50%; width: 22px; height: 22px;
+  display: flex; align-items: center; justify-content: center;
+  cursor: pointer; font-size: 11px; color: var(--text-muted);
+  flex-shrink: 0; line-height: 1;
+  transition: background .15s, color .15s, border-color .15s;
+}
+.msg-info-btn:hover { background: var(--accent-light); color: var(--accent); border-color: var(--accent); }
+.metrics-popover {
+  display: none;
+  position: absolute; bottom: calc(100% + 8px); right: 0;
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 14px 16px;
+  min-width: 240px; max-width: 300px;
+  box-shadow: 0 8px 32px rgba(0,0,0,.12);
+  z-index: 300; font-size: 12px; color: var(--text);
+}
+.metrics-popover.open { display: block; }
+.metrics-popover-title {
+  font-size: 11px; font-weight: 700; color: var(--text-muted);
+  text-transform: uppercase; letter-spacing: .5px; margin-bottom: 10px;
+}
+.metrics-row {
+  display: flex; justify-content: space-between;
+  padding: 4px 0; border-bottom: 1px solid var(--border);
+}
+.metrics-row:last-child { border-bottom: none; }
+.metrics-label { color: var(--text-muted); }
+.metrics-value  { font-weight: 600; color: var(--text); }
+
+/* ── Empty state ──────────────────────────────────────────────────────────── */
+.empty-state {
+  display: flex; flex-direction: column; align-items: center;
+  justify-content: center; padding: 80px 40px; gap: 16px;
+  color: var(--text-muted); text-align: center;
+  min-height: 40vh;
+}
+.empty-state-icon    { font-size: 48px; opacity: .4; }
+.empty-state-heading { font-size: 20px; font-weight: 700; color: var(--text); }
+.empty-state-sub     { font-size: 14px; max-width: 340px; line-height: 1.6; }
+.suggestion-chips    { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; margin-top: 12px; }
+.suggestion-chip {
+  background: var(--surface); border: 1px solid var(--border); border-radius: 99px;
+  padding: 8px 18px; font-size: 13px; cursor: pointer; color: var(--text);
+  transition: background .15s, border-color .15s, color .15s;
+}
+.suggestion-chip:hover { background: var(--accent-light); border-color: var(--accent); color: var(--accent); }
+
+/* ── File attachment chip ─────────────────────────────────────────────────── */
+.file-chip-row { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
+.file-chip {
+  display: inline-flex; align-items: center; gap: 6px;
+  background: var(--accent-light); color: var(--accent);
+  border: 1px solid #c7d0fb; border-radius: 8px;
+  padding: 6px 12px; font-size: 12px; font-weight: 600;
+}
+.file-chip-name { max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.file-chip-size { color: var(--text-muted); font-weight: 400; }
+.file-chip-remove {
+  background: none; border: none; cursor: pointer;
+  color: var(--text-muted); font-size: 14px; line-height: 1;
+  padding: 0 0 0 4px;
+  transition: color .15s;
+}
+.file-chip-remove:hover { color: var(--danger); }
 
 /* ── Typing indicator ─────────────────────────────────────────────────────── */
 .typing-indicator {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  padding: 10px 14px;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
+  display: flex; align-items: center; gap: 5px;
+  padding: 10px 14px; background: var(--surface);
+  border: 1px solid var(--border); border-radius: var(--radius);
   width: fit-content;
 }
 .typing-dot {
-  width: 7px; height: 7px;
-  border-radius: 50%;
-  background: var(--text-muted);
+  width: 7px; height: 7px; border-radius: 50%; background: var(--text-muted);
   animation: typing-bounce 1.2s infinite ease-in-out;
 }
 .typing-dot:nth-child(2) { animation-delay: .2s; }
@@ -245,278 +252,88 @@ body, .stApp { background: var(--bg) !important; font-family: var(--font); }
   40%          { transform: translateY(-6px); opacity:1; }
 }
 
-/* ── Empty-state ──────────────────────────────────────────────────────────── */
-.empty-state {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  flex: 1;
-  gap: 20px;
-  color: var(--text-muted);
-  text-align: center;
-  padding: 40px;
-}
-.empty-state-icon { font-size: 48px; opacity: .4; }
-.empty-state-heading { font-size: 18px; font-weight: 600; color: var(--text); }
-.empty-state-sub { font-size: 13px; max-width: 340px; }
-.suggestion-chips { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; margin-top: 8px; }
-.suggestion-chip {
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 99px;
-  padding: 6px 16px;
-  font-size: 13px;
-  cursor: pointer;
-  transition: background .15s, border-color .15s;
-  color: var(--text);
-}
-.suggestion-chip:hover { background: var(--accent-light); border-color: var(--accent); color: var(--accent); }
-
-/* ── Chat input bar ───────────────────────────────────────────────────────── */
-.chat-input-bar {
-  padding: 14px 20px;
-  border-top: 1px solid var(--border);
-  background: var(--surface);
-  flex-shrink: 0;
+/* ── Compact file uploader (hide dropzone text, keep Browse button) ───────── */
+[data-testid="stFileUploaderDropzoneInstructions"] { display: none !important; }
+[data-testid="stFileUploadDropzone"] {
+  border: 1px dashed var(--border) !important;
+  border-radius: 8px !important;
+  padding: 8px 12px !important;
+  background: transparent !important;
+  min-height: auto !important;
 }
 
-/* ── Source cards (left pane) ─────────────────────────────────────────────── */
-.source-card {
-  display: flex;
-  align-items: flex-start;
-  gap: 10px;
-  padding: 10px 12px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  margin-bottom: 8px;
-  cursor: pointer;
-  transition: border-color .15s, background .15s;
-  background: var(--surface);
-}
-.source-card.active { border-color: var(--accent); background: var(--accent-light); }
-.source-card.highlighted { box-shadow: 0 0 0 2px var(--accent); }
-.source-card-icon { font-size: 20px; flex-shrink: 0; margin-top: 1px; }
-.source-card-body { flex: 1; min-width: 0; }
-.source-card-name { font-size: 13px; font-weight: 600; color: var(--text); word-break: break-all; }
-.source-card-meta { font-size: 11px; color: var(--text-muted); margin-top: 2px; }
-.status-dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin-right: 4px; vertical-align: middle; }
-.status-dot.ready   { background: #22c55e; }
-.status-dot.processing { background: #f59e0b; animation: pulse 1.5s infinite; }
-.status-dot.error   { background: var(--danger); }
-@keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.4} }
-.source-card-check { flex-shrink: 0; margin-top: 3px; }
-
-/* ── Stat cards (right pane) ──────────────────────────────────────────────── */
-.stat-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 12px; }
-.stat-card {
-  background: var(--bg);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 10px 12px;
-}
-.stat-card-value { font-size: 20px; font-weight: 700; color: var(--text); }
-.stat-card-label { font-size: 10px; color: var(--text-muted); margin-top: 2px; text-transform: uppercase; letter-spacing: .5px; }
-.scores-table { width: 100%; border-collapse: collapse; font-size: 12px; }
-.scores-table th, .scores-table td { padding: 5px 8px; text-align: left; border-bottom: 1px solid var(--border); }
-.scores-table th { color: var(--text-muted); font-weight: 600; text-transform: uppercase; font-size: 10px; letter-spacing: .5px; }
-
-/* ── Misc ─────────────────────────────────────────────────────────────────── */
-.section-label {
-  font-size: 11px;
-  font-weight: 700;
-  color: var(--text-muted);
-  text-transform: uppercase;
-  letter-spacing: .6px;
-  margin: 16px 0 8px;
-}
-.section-label:first-child { margin-top: 0; }
-.divider { height: 1px; background: var(--border); margin: 14px 0; }
+/* ── Misc banners ─────────────────────────────────────────────────────────── */
 .warn-banner {
-  background: var(--warn-bg);
-  border: 1px solid var(--warn-border);
-  border-radius: var(--radius);
-  padding: 8px 12px;
-  font-size: 12px;
-  color: #92400e;
-  margin-bottom: 12px;
+  background: var(--warn-bg); border: 1px solid var(--warn-border);
+  border-radius: var(--radius); padding: 8px 14px;
+  font-size: 12px; color: #92400e; margin-bottom: 12px;
 }
-.info-banner {
-  background: var(--accent-light);
-  border: 1px solid #c7d0fb;
-  border-radius: var(--radius);
-  padding: 8px 12px;
-  font-size: 12px;
-  color: #3730a3;
-  margin-bottom: 12px;
-}
-
-/* ── Source overlay ───────────────────────────────────────────────────────── */
-.source-overlay-backdrop {
-  display: none;
-  position: fixed; inset: 0;
-  background: rgba(0,0,0,.45);
-  z-index: 1000;
-}
-.source-overlay-backdrop.open { display: flex; align-items: center; justify-content: center; }
-.source-overlay {
-  background: var(--surface);
-  border-radius: 14px;
-  width: min(600px, 92vw);
-  max-height: 80vh;
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-  box-shadow: 0 20px 60px rgba(0,0,0,.25);
-}
-.source-overlay-header {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 16px 20px;
-  border-bottom: 1px solid var(--border);
-}
-.source-overlay-title { font-size: 15px; font-weight: 700; flex: 1; color: var(--text); }
-.source-overlay-close {
-  background: none; border: none; cursor: pointer;
-  font-size: 20px; color: var(--text-muted); padding: 0 4px;
-}
-.source-overlay-close:hover { color: var(--text); }
-.source-overlay-body { flex: 1; overflow-y: auto; padding: 20px; font-size: 14px; line-height: 1.7; color: var(--text); white-space: pre-wrap; }
-
-/* ── Mobile ───────────────────────────────────────────────────────────────── */
-@media (max-width: 767px) {
-  .rag-pane { position: fixed; top: 0; bottom: 0; z-index: 200; box-shadow: 4px 0 24px rgba(0,0,0,.15); }
-  .rag-pane-left  { left: 0; transform: translateX(-100%); transition: transform var(--transition); }
-  .rag-pane-right { right: 0; transform: translateX(100%); border-left: 1px solid var(--border); transition: transform var(--transition); }
-  .rag-pane-left.mobile-open  { transform: translateX(0); }
-  .rag-pane-right.mobile-open { transform: translateX(0); }
-  .rag-pane.collapsed { width: var(--pane-left-w) !important; }
-  .mobile-top-bar {
-    display: flex !important;
-  }
-}
-.mobile-top-bar {
-  display: none;
-  align-items: center;
-  gap: 10px;
-  padding: 10px 14px;
-  background: var(--surface);
-  border-bottom: 1px solid var(--border);
-}
-.mobile-icon-btn {
-  background: none; border: 1px solid var(--border);
-  border-radius: 8px; padding: 6px 10px; cursor: pointer; font-size: 18px;
-}
-.mobile-overlay-bg {
-  display: none;
-  position: fixed; inset: 0; background: rgba(0,0,0,.3); z-index: 199;
-}
-.mobile-overlay-bg.open { display: block; }
 </style>
 """
 
-_COLLAPSE_JS = """
+_CHAT_JS = """
 <script>
 (function() {
-  const KEYS = { left: 'rag_left_collapsed', right: 'rag_right_collapsed' };
-
-  function applyState(side, collapsed) {
-    const pane = document.querySelector('.rag-pane-' + side);
-    if (!pane) return;
-    if (collapsed) pane.classList.add('collapsed');
-    else pane.classList.remove('collapsed');
-    const btn = pane.querySelector('.pane-collapse-btn');
-    if (btn) btn.textContent = collapsed ? (side === 'left' ? '›' : '‹') : (side === 'left' ? '‹' : '›');
-  }
-
-  function togglePane(side) {
-    const cur = localStorage.getItem(KEYS[side]) === '1';
-    const next = !cur;
-    localStorage.setItem(KEYS[side], next ? '1' : '0');
-    applyState(side, next);
-  }
-
   function init() {
-    applyState('left',  localStorage.getItem(KEYS.left)  === '1');
-    applyState('right', localStorage.getItem(KEYS.right) === '1');
-
-    document.querySelectorAll('[data-collapse]').forEach(btn => {
-      btn.addEventListener('click', () => togglePane(btn.dataset.collapse));
-    });
-
-    // Suggestion chips → fill streamlit chat input and submit
+    // ── Suggestion chips → fill and submit chat input ─────────────────────────
     document.querySelectorAll('.suggestion-chip').forEach(chip => {
       chip.addEventListener('click', () => {
         const txt = chip.dataset.q;
         const inp = document.querySelector('[data-testid="stChatInputTextArea"]');
         if (inp) {
-          const nativeSetter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value').set;
+          const nativeSetter = Object.getOwnPropertyDescriptor(
+            window.HTMLTextAreaElement.prototype, 'value').set;
           nativeSetter.call(inp, txt);
           inp.dispatchEvent(new Event('input', { bubbles: true }));
           const form = inp.closest('form');
           if (form) {
-            const submitBtn = form.querySelector('button[type="submit"], button[kind="primaryFormSubmit"]');
+            const submitBtn = form.querySelector(
+              'button[type="submit"], button[kind="primaryFormSubmit"]');
             if (submitBtn) submitBtn.click();
           }
         }
       });
     });
 
-    // Citation chip → highlight source card + open overlay
-    document.querySelectorAll('.citation-chip').forEach(chip => {
-      chip.addEventListener('click', () => {
-        const src = chip.dataset.source;
-        const text = chip.dataset.text || '';
+    // ── Gear icon → trigger hidden Streamlit button ───────────────────────────
+    document.getElementById('gear-icon-btn')?.addEventListener('click', () => {
+      const wrap = document.getElementById('gear-hidden-wrap');
+      if (wrap) {
+        const btn = wrap.querySelector('button');
+        if (btn) btn.click();
+      }
+    });
 
-        // Highlight matching source card in left pane
-        document.querySelectorAll('.source-card').forEach(c => c.classList.remove('highlighted'));
-        const card = document.querySelector(`.source-card[data-name="${CSS.escape(src)}"]`);
-        if (card) {
-          card.classList.add('highlighted');
-          card.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-          // Expand left pane if collapsed
-          const leftPane = document.querySelector('.rag-pane-left');
-          if (leftPane && leftPane.classList.contains('collapsed')) {
-            localStorage.setItem('rag_left_collapsed', '0');
-            applyState('left', false);
-          }
-        }
-
-        // Open overlay
-        const backdrop = document.getElementById('src-overlay-backdrop');
-        const titleEl  = document.getElementById('src-overlay-title');
-        const bodyEl   = document.getElementById('src-overlay-body');
-        if (backdrop && titleEl && bodyEl) {
-          titleEl.textContent = src;
-          bodyEl.textContent  = text || '(No preview text available)';
-          backdrop.classList.add('open');
+    // ── File chip remove → trigger hidden Streamlit button ────────────────────
+    document.querySelectorAll('.file-chip-remove').forEach(el => {
+      el.addEventListener('click', () => {
+        const wrap = document.getElementById('remove-doc-hidden-wrap');
+        if (wrap) {
+          const btn = wrap.querySelector('button');
+          if (btn) btn.click();
         }
       });
     });
 
-    document.getElementById('src-overlay-close')?.addEventListener('click', closeOverlay);
-    document.getElementById('src-overlay-backdrop')?.addEventListener('click', e => {
-      if (e.target.id === 'src-overlay-backdrop') closeOverlay();
+    // ── Info icon → toggle metrics popover ────────────────────────────────────
+    document.querySelectorAll('.msg-info-btn').forEach(btn => {
+      btn.addEventListener('click', e => {
+        e.stopPropagation();
+        const popover = btn.nextElementSibling;
+        if (!popover) return;
+        const wasOpen = popover.classList.contains('open');
+        document.querySelectorAll('.metrics-popover.open')
+          .forEach(p => p.classList.remove('open'));
+        if (!wasOpen) popover.classList.add('open');
+      });
     });
-    function closeOverlay() {
-      document.getElementById('src-overlay-backdrop')?.classList.remove('open');
-      document.querySelectorAll('.source-card').forEach(c => c.classList.remove('highlighted'));
-    }
 
-    // Mobile drawer toggles
-    document.getElementById('mob-left-btn')?.addEventListener('click', () => {
-      document.querySelector('.rag-pane-left')?.classList.toggle('mobile-open');
-      document.getElementById('mob-overlay')?.classList.toggle('open');
-    });
-    document.getElementById('mob-right-btn')?.addEventListener('click', () => {
-      document.querySelector('.rag-pane-right')?.classList.toggle('mobile-open');
-      document.getElementById('mob-overlay')?.classList.toggle('open');
-    });
-    document.getElementById('mob-overlay')?.addEventListener('click', () => {
-      document.querySelector('.rag-pane-left')?.classList.remove('mobile-open');
-      document.querySelector('.rag-pane-right')?.classList.remove('mobile-open');
-      document.getElementById('mob-overlay')?.classList.remove('open');
+    // Close popovers on outside click
+    document.addEventListener('click', e => {
+      if (!e.target.closest('.msg-info-wrap')) {
+        document.querySelectorAll('.metrics-popover.open')
+          .forEach(p => p.classList.remove('open'));
+      }
     });
   }
 
@@ -524,7 +341,6 @@ _COLLAPSE_JS = """
     document.addEventListener('DOMContentLoaded', init);
   } else {
     init();
-    // Retry shortly after Streamlit re-renders
     setTimeout(init, 400);
   }
 })();
@@ -536,19 +352,19 @@ _COLLAPSE_JS = """
 # State helpers
 # ─────────────────────────────────────────────────────────────────────────────
 
-def initialize_state() -> None:
-    defaults = {
+def initialize_state(config: AppConfig) -> None:
+    defaults: dict = {
         "messages": [],
         "document_id": None,
         "document_name": None,
         "namespace": None,
         "chunk_count": 0,
-        "latest_answer": None,
-        "latest_sources": [],
-        "latest_metrics": None,
         "last_ingested_index": None,
-        "source_active": True,
         "pending_suggestion": None,
+        # Settings overrides — seeded from env/config on first load
+        "cfg_index": config.pinecone_index_name,
+        "cfg_topk": config.top_k,
+        "cfg_conf": float(config.min_confidence_score),
     }
     for key, value in defaults.items():
         st.session_state.setdefault(key, value)
@@ -556,9 +372,42 @@ def initialize_state() -> None:
 
 def clear_conversation() -> None:
     st.session_state.messages = []
-    st.session_state.latest_answer = None
-    st.session_state.latest_sources = []
-    st.session_state.latest_metrics = None
+
+
+def _remove_document() -> None:
+    st.session_state.document_id = None
+    st.session_state.document_name = None
+    st.session_state.namespace = None
+    st.session_state.chunk_count = 0
+    st.session_state.last_ingested_index = None
+    clear_conversation()
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Settings dialog  (must be module-level for @st.dialog)
+# ─────────────────────────────────────────────────────────────────────────────
+
+@st.dialog("⚙️ Settings")
+def settings_dialog() -> None:
+    st.text_input("Index name", key="cfg_index")
+    st.number_input("Top K", min_value=1, max_value=10, step=1, key="cfg_topk")
+    st.slider("Min confidence", min_value=0.0, max_value=1.0, step=0.01, key="cfg_conf")
+
+    st.divider()
+
+    if st.button("🗑 Clear conversation", key="dlg_clear_btn"):
+        clear_conversation()
+        st.rerun()
+
+    doc_name = st.session_state.get("document_name")
+    if doc_name:
+        st.markdown("**Uploaded document**")
+        chunk_count = st.session_state.get("chunk_count", 0)
+        st.markdown(f"📄 **{doc_name}** &nbsp;·&nbsp; {chunk_count} chunks",
+                    unsafe_allow_html=True)
+        if st.button("Remove document", key="dlg_remove_doc_btn"):
+            _remove_document()
+            st.rerun()
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -569,7 +418,7 @@ def ingest_pdf(
     uploaded_file,
     config: AppConfig,
     embedding_service: EmbeddingService,
-    vector_store: PineconeVectorStore,
+    vector_store: "PineconeVectorStore",
 ) -> None:
     pdf_bytes = uploaded_file.getvalue()
     document_hash = hashlib.sha256(pdf_bytes).hexdigest()
@@ -646,20 +495,11 @@ def _file_size_label(uploaded_file) -> str:
         return ""
 
 
-def _build_source_card_html(name: str, meta: str, status: str, active: bool) -> str:
-    active_cls = "active" if active else ""
-    return f"""
-<div class="source-card {active_cls}" data-name="{_esc(name)}">
-  <span class="source-card-icon">📄</span>
-  <div class="source-card-body">
-    <div class="source-card-name">{_esc(name)}</div>
-    <div class="source-card-meta">
-      <span class="status-dot {status}"></span>{_esc(meta)}
-    </div>
-  </div>
-  <input class="source-card-check" type="checkbox" {"checked" if active else ""} readonly>
-</div>
-"""
+def _citation_chip_label(src) -> str:
+    """Compact label: 'filename.pdf · p.5'."""
+    if src.page is not None:
+        return f"{src.source} · p.{src.page}"
+    return f"{src.source} · chunk {src.chunk_index}"
 
 
 def _build_citation_chips_html(sources: list) -> str:
@@ -667,52 +507,91 @@ def _build_citation_chips_html(sources: list) -> str:
         return ""
     chips = ""
     for src in sources:
-        label = format_citation(src)
-        preview_text = _esc(src.text[:800])
-        src_name = _esc(src.source)
+        label = _citation_chip_label(src)
+        # Tooltip: first 200 chars of chunk text, newlines replaced with spaces
+        tooltip = _esc(src.text[:200].replace("\n", " "))
         chips += (
-            f'<span class="citation-chip" data-source="{src_name}" data-text="{preview_text}">'
-            f"🔖 {_esc(label)}</span>"
+            f'<span class="citation-chip" data-tooltip="{tooltip}">'
+            f"📎 {_esc(label)}</span>"
         )
     return f'<div class="citations-row">{chips}</div>'
 
 
-def _build_message_html(role: str, content: str, sources: list | None = None) -> str:
-    is_no_info = content.startswith(_NO_INFO_PREFIX)
-    extra_cls = "no-info" if (role == "assistant" and is_no_info) else ""
-    chips = _build_citation_chips_html(sources or []) if role == "assistant" else ""
-    return f"""
-<div class="msg-row {_esc(role)}">
-  <div class="msg-bubble {extra_cls}">
-    {_esc(content)}
-    {chips}
-  </div>
-</div>
-"""
-
-
-def _build_stat_card(value: str, label: str) -> str:
-    return f"""
-<div class="stat-card">
-  <div class="stat-card-value">{_esc(value)}</div>
-  <div class="stat-card-label">{_esc(label)}</div>
-</div>
-"""
-
-
-def _build_scores_table(scores: list[float]) -> str:
-    if not scores:
-        return "<p style='font-size:12px;color:var(--text-muted)'>No scores</p>"
-    rows = "".join(
-        f"<tr><td>#{i+1}</td><td>{s:.4f}</td></tr>"
-        for i, s in enumerate(scores)
+def _build_metrics_popover_html(metrics: dict) -> str:
+    """Build the (i) button + hidden popover for one assistant message."""
+    display = format_metrics_for_display(metrics)
+    rows_data = [
+        ("Retrieved",   display["Retrieved"]),
+        ("Relevant",    display["Relevant"]),
+        ("Threshold",   display["Threshold"]),
+        ("Avg score",   display["Average score (retrieval-score-based precision proxy)"]),
+        ("Recall proxy",display["Recall proxy (retrieval-score-based)"]),
+    ]
+    rows_html = "".join(
+        f'<div class="metrics-row">'
+        f'<span class="metrics-label">{_esc(lbl)}</span>'
+        f'<span class="metrics-value">{_esc(val)}</span>'
+        f'</div>'
+        for lbl, val in rows_data
     )
-    return f"""
-<table class="scores-table">
-  <thead><tr><th>#</th><th>Score</th></tr></thead>
-  <tbody>{rows}</tbody>
-</table>
-"""
+    if metrics.get("scores"):
+        scores_str = ", ".join(f"{s:.3f}" for s in metrics["scores"])
+        rows_html += (
+            f'<div class="metrics-row">'
+            f'<span class="metrics-label">Scores</span>'
+            f'<span class="metrics-value">{_esc(scores_str)}</span>'
+            f'</div>'
+        )
+    return (
+        '<div class="msg-info-wrap">'
+        '<button class="msg-info-btn" title="Retrieval metrics">ℹ</button>'
+        '<div class="metrics-popover">'
+        '<div class="metrics-popover-title">Retrieval Metrics</div>'
+        f'{rows_html}'
+        '</div>'
+        '</div>'
+    )
+
+
+def _build_message_html(
+    role: str,
+    content: str,
+    sources: list | None = None,
+    metrics: dict | None = None,
+) -> str:
+    is_no_info = role == "assistant" and content.startswith(_NO_INFO_PREFIX)
+    bubble_cls = "no-info" if is_no_info else ""
+    chips_html = _build_citation_chips_html(sources or []) if role == "assistant" else ""
+    info_html = _build_metrics_popover_html(metrics) if (role == "assistant" and metrics) else ""
+
+    if role == "assistant":
+        return (
+            f'<div class="msg-row assistant">'
+            f'<div class="msg-bubble {bubble_cls}">'
+            f'{_esc(content)}'
+            f'{chips_html}'
+            f'</div>'
+            f'{info_html}'
+            f'</div>'
+        )
+    return (
+        f'<div class="msg-row user">'
+        f'<div class="msg-bubble">{_esc(content)}</div>'
+        f'</div>'
+    )
+
+
+def _build_file_chip_html(name: str, chunk_count: int) -> str:
+    return (
+        '<div class="file-chip-row">'
+        '<div class="file-chip">'
+        '<span>📄</span>'
+        f'<span class="file-chip-name">{_esc(name)}</span>'
+        f'<span class="file-chip-size">&nbsp;·&nbsp;{chunk_count} chunks</span>'
+        '<button class="file-chip-remove" title="Remove document">✕</button>'
+        '</div>'
+        '</div>'
+    )
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -720,10 +599,17 @@ def _build_scores_table(scores: list[float]) -> str:
 # ─────────────────────────────────────────────────────────────────────────────
 
 def main() -> None:
-    st.set_page_config(page_title="RAG Notebook", page_icon="📓", layout="wide")
-    initialize_state()
+    st.set_page_config(page_title="RAG Chat", page_icon="💬", layout="wide")
 
     config = load_config()
+    initialize_state(config)
+
+    # ── Apply session overrides to config ────────────────────────────────────
+    config = config.with_overrides(
+        pinecone_index_name=st.session_state.get("cfg_index", config.pinecone_index_name),
+        top_k=int(st.session_state.get("cfg_topk", config.top_k)),
+        min_confidence_score=float(st.session_state.get("cfg_conf", config.min_confidence_score)),
+    )
 
     missing_keys: list[str] = []
     if not config.openai_api_key:
@@ -734,107 +620,46 @@ def main() -> None:
     # ── Inject global CSS ────────────────────────────────────────────────────
     st.markdown(_GLOBAL_CSS, unsafe_allow_html=True)
 
-    # ── Open shell ───────────────────────────────────────────────────────────
-    st.markdown('<div class="rag-shell">', unsafe_allow_html=True)
+    # ── Fixed top bar (HTML only — gear click triggers hidden Streamlit btn) ─
+    st.markdown(
+        '<div class="app-header">'
+        '<span class="app-title">💬 RAG Chat</span>'
+        '<button class="app-gear-btn" id="gear-icon-btn" title="Settings">⚙️</button>'
+        '</div>',
+        unsafe_allow_html=True,
+    )
 
-    # ────────────────────────────────────────────────────────────────────────
-    # LEFT PANE — Sources
-    # ────────────────────────────────────────────────────────────────────────
-    st.markdown("""
-<div class="rag-pane rag-pane-left" id="pane-left">
-  <div class="pane-header">
-    <span class="pane-header-icon">📁</span>
-    <span class="pane-header-title">Sources</span>
-    <button class="pane-collapse-btn" data-collapse="left" title="Collapse">‹</button>
-    <span class="rail-badge" id="src-badge">0</span>
-  </div>
-  <div class="pane-body" id="pane-left-body">
-""", unsafe_allow_html=True)
+    # ── Hidden Streamlit button — triggered by the gear icon via JS ──────────
+    st.markdown('<div id="gear-hidden-wrap">', unsafe_allow_html=True)
+    gear_clicked = st.button("⚙", key="gear_toggle_btn", label_visibility="collapsed")
+    st.markdown('</div>', unsafe_allow_html=True)
 
-    # Warnings
+    if gear_clicked:
+        settings_dialog()
+
+    # ── API key warning ──────────────────────────────────────────────────────
     if missing_keys:
         st.markdown(
             f'<div class="warn-banner">⚠️ Missing keys: {", ".join(missing_keys)}. '
-            f'Add them to <code>.env</code> before indexing.</div>',
+            f"Add them to <code>.env</code> before indexing.</div>",
             unsafe_allow_html=True,
         )
 
-    # Source card or empty state
-    doc_name = st.session_state.document_name
-    if doc_name:
-        # Show source card
-        meta = f"{st.session_state.chunk_count} chunks"
-        active = st.session_state.source_active
-        st.markdown(
-            _build_source_card_html(doc_name, meta, "ready", active),
-            unsafe_allow_html=True,
-        )
-        # Toggle active checkbox via a real Streamlit checkbox (hidden beneath the card)
-        new_active = st.checkbox(
-            "Active",
-            value=active,
-            key="src_active_cb",
-            label_visibility="collapsed",
-        )
-        if new_active != active:
-            st.session_state.source_active = new_active
-            st.rerun()
-
-        st.markdown(
-            '<div class="section-label" style="margin-top:14px">+ Add source</div>',
-            unsafe_allow_html=True,
-        )
-
-    # File uploader (always present; acts as "Add source" CTA)
-    uploaded_file = st.file_uploader(
-        "Upload PDF",
-        type=["pdf"],
-        label_visibility="collapsed",
-        key="pdf_uploader",
-    )
-
-    st.markdown('</div></div>', unsafe_allow_html=True)  # close pane-body + pane-left
-
-    # ── Handle upload ────────────────────────────────────────────────────────
-    if uploaded_file is not None:
-        if missing_keys:
-            st.markdown(
-                '<div class="info-banner">Upload received — indexing disabled until API keys are set.</div>',
-                unsafe_allow_html=True,
-            )
-        else:
-            try:
-                embedding_service = build_embedding_service(config)
-                vector_store = build_vector_store(config)
-                with st.spinner("Indexing PDF…"):
-                    ingest_pdf(uploaded_file, config, embedding_service, vector_store)
-                st.session_state.source_active = True
-            except (PDFProcessingError, EmbeddingServiceError, VectorStoreError) as exc:
-                st.error(str(exc))
-
-    # ────────────────────────────────────────────────────────────────────────
-    # CENTER PANE — Chat
-    # ────────────────────────────────────────────────────────────────────────
-    st.markdown("""
-<div class="rag-center">
-  <div class="center-header">
-    <span style="font-size:18px">💬</span>
-    <span class="center-header-title">Chat</span>
-  </div>
-""", unsafe_allow_html=True)
-
+    # ── Chat thread ──────────────────────────────────────────────────────────
     messages = st.session_state.messages
-    latest_sources = st.session_state.latest_sources
 
     if messages:
-        st.markdown('<div class="chat-thread" id="chat-thread">', unsafe_allow_html=True)
-        # Pair messages; attach sources to last assistant message
-        for i, msg in enumerate(messages):
-            is_last_assistant = (
-                msg["role"] == "assistant" and i == len(messages) - 1
+        st.markdown('<div class="chat-thread">', unsafe_allow_html=True)
+        for msg in messages:
+            st.markdown(
+                _build_message_html(
+                    role=msg["role"],
+                    content=msg["content"],
+                    sources=msg.get("sources"),
+                    metrics=msg.get("metrics"),
+                ),
+                unsafe_allow_html=True,
             )
-            srcs = latest_sources if is_last_assistant else []
-            st.markdown(_build_message_html(msg["role"], msg["content"], srcs), unsafe_allow_html=True)
         st.markdown('</div>', unsafe_allow_html=True)
     else:
         # Empty state with suggestion chips
@@ -842,127 +667,67 @@ def main() -> None:
             f'<button class="suggestion-chip" data-q="{_esc(q)}">{_esc(q)}</button>'
             for q in _SUGGESTION_CHIPS
         )
-        st.markdown(f"""
-<div class="chat-thread" style="display:flex;flex-direction:column;">
-  <div class="empty-state">
-    <div class="empty-state-icon">📓</div>
-    <div class="empty-state-heading">Ask about your document</div>
-    <div class="empty-state-sub">Upload a PDF in the Sources pane, then ask a question below.</div>
-    <div class="suggestion-chips">{suggestions_html}</div>
-  </div>
-</div>
-""", unsafe_allow_html=True)
-
-    st.markdown('</div>', unsafe_allow_html=True)  # close rag-center
-
-    # ────────────────────────────────────────────────────────────────────────
-    # RIGHT PANE — Evals / Configuration
-    # ────────────────────────────────────────────────────────────────────────
-    st.markdown("""
-<div class="rag-pane rag-pane-right" id="pane-right">
-  <div class="pane-header">
-    <span class="pane-header-icon">⚙️</span>
-    <span class="pane-header-title">Evals &amp; Config</span>
-    <button class="pane-collapse-btn" data-collapse="right" title="Collapse">›</button>
-  </div>
-  <div class="pane-body">
-""", unsafe_allow_html=True)
-
-    # ── Configuration sub-section ────────────────────────────────────────────
-    with st.expander("⚙️ Configuration", expanded=True):
-        index_name = st.text_input(
-            "Index name",
-            value=config.pinecone_index_name,
-            help="Pinecone index to use",
-            key="cfg_index",
-        ).strip()
-        top_k = st.number_input("Top K", min_value=1, max_value=10, value=config.top_k, step=1, key="cfg_topk")
-        min_conf = st.slider(
-            "Min confidence",
-            min_value=0.0, max_value=1.0,
-            value=float(config.min_confidence_score),
-            step=0.01,
-            key="cfg_conf",
+        st.markdown(
+            '<div class="empty-state">'
+            '<div class="empty-state-icon">💬</div>'
+            '<div class="empty-state-heading">Ask about your document</div>'
+            '<div class="empty-state-sub">'
+            'Attach a PDF with the 📎 button below, then ask a question.'
+            '</div>'
+            f'<div class="suggestion-chips">{suggestions_html}</div>'
+            '</div>',
+            unsafe_allow_html=True,
         )
-        config = config.with_overrides(
-            pinecone_index_name=index_name or config.pinecone_index_name,
-            top_k=int(top_k),
-            min_confidence_score=float(min_conf),
-        )
-        if st.button("🗑 Clear conversation", key="clear_btn"):
-            clear_conversation()
+
+    # ── File attachment chip + remove (when a doc is loaded) ─────────────────
+    doc_name = st.session_state.document_name
+    chunk_count = st.session_state.chunk_count
+
+    if doc_name:
+        st.markdown(_build_file_chip_html(doc_name, chunk_count), unsafe_allow_html=True)
+        # Hidden Streamlit button for the × on the chip
+        st.markdown('<div id="remove-doc-hidden-wrap">', unsafe_allow_html=True)
+        remove_clicked = st.button("✕", key="remove_doc_btn", label_visibility="collapsed")
+        st.markdown('</div>', unsafe_allow_html=True)
+        if remove_clicked:
+            _remove_document()
             st.rerun()
 
-    # ── Retrieval Metrics sub-section ────────────────────────────────────────
-    with st.expander("📊 Retrieval Metrics", expanded=True):
-        metrics = st.session_state.latest_metrics
-        if metrics:
-            display = format_metrics_for_display(metrics)
-            # Stat cards grid
-            st.markdown(
-                '<div class="stat-grid">'
-                + _build_stat_card(display["Retrieved"], "Retrieved")
-                + _build_stat_card(display["Relevant"], "Relevant")
-                + _build_stat_card(display["Threshold"], "Threshold")
-                + _build_stat_card(display["Average score (retrieval-score-based precision proxy)"], "Avg Score")
-                + '</div>',
-                unsafe_allow_html=True,
-            )
-            st.markdown(
-                '<div class="section-label">Recall proxy</div>'
-                f'<div style="font-size:22px;font-weight:700">{display["Recall proxy (retrieval-score-based)"]}</div>',
-                unsafe_allow_html=True,
-            )
-            st.markdown('<div class="section-label" style="margin-top:14px">Individual scores</div>', unsafe_allow_html=True)
-            st.markdown(_build_scores_table(metrics.get("scores", [])), unsafe_allow_html=True)
-        else:
-            st.markdown(
-                '<p style="font-size:13px;color:var(--text-muted)">No metrics yet — ask a question first.</p>',
-                unsafe_allow_html=True,
-            )
-
-    st.markdown('</div></div>', unsafe_allow_html=True)  # close pane-body + pane-right
-
-    # ── Close shell ──────────────────────────────────────────────────────────
-    st.markdown('</div>', unsafe_allow_html=True)
-
-    # ── Source preview overlay ────────────────────────────────────────────────
-    st.markdown("""
-<div class="source-overlay-backdrop" id="src-overlay-backdrop">
-  <div class="source-overlay">
-    <div class="source-overlay-header">
-      <span style="font-size:20px">📄</span>
-      <span class="source-overlay-title" id="src-overlay-title"></span>
-      <button class="source-overlay-close" id="src-overlay-close">✕</button>
-    </div>
-    <div class="source-overlay-body" id="src-overlay-body"></div>
-  </div>
-</div>
-""", unsafe_allow_html=True)
-
-    # ── Inject JS ─────────────────────────────────────────────────────────────
-    st.markdown(_COLLAPSE_JS, unsafe_allow_html=True)
-
-    # ── Update source badge count via JS ──────────────────────────────────────
-    src_count = 1 if st.session_state.document_name else 0
-    st.markdown(
-        f"<script>document.getElementById('src-badge') && "
-        f"(document.getElementById('src-badge').textContent='{src_count}');</script>",
-        unsafe_allow_html=True,
+    # ── File uploader (compact; appears just above chat input) ───────────────
+    upload_label = "📎 Replace PDF" if doc_name else "📎 Attach PDF"
+    uploaded_file = st.file_uploader(
+        upload_label,
+        type=["pdf"],
+        key="pdf_uploader",
+        label_visibility="visible",
     )
 
-    # ────────────────────────────────────────────────────────────────────────
-    # Chat input + query handling
-    # ────────────────────────────────────────────────────────────────────────
-    source_ready = bool(st.session_state.namespace and st.session_state.source_active)
+    # ── Chat input ───────────────────────────────────────────────────────────
+    source_ready = bool(st.session_state.namespace)
     placeholder = (
-        "Ask a question about the uploaded PDF…"
+        "Ask a question about the document…"
         if source_ready
-        else "Upload and index a PDF to start chatting…"
+        else "Attach a PDF first to start chatting…"
     )
-
     question = st.chat_input(placeholder, disabled=not source_ready, key="chat_input")
 
+    # ── Inject JS (after all HTML has been rendered) ─────────────────────────
+    st.markdown(_CHAT_JS, unsafe_allow_html=True)
+
+    # ── Handle file upload ───────────────────────────────────────────────────
+    if uploaded_file is not None:
+        if missing_keys:
+            st.info("Upload received — indexing disabled until API keys are set.")
+        else:
+            try:
+                embedding_service = build_embedding_service(config)
+                vector_store = build_vector_store(config)
+                with st.spinner("Indexing PDF…"):
+                    ingest_pdf(uploaded_file, config, embedding_service, vector_store)
+            except (PDFProcessingError, EmbeddingServiceError, VectorStoreError) as exc:
+                st.error(str(exc))
+
+    # ── Handle query ─────────────────────────────────────────────────────────
     if question is None:
         return
 
@@ -989,10 +754,7 @@ def main() -> None:
             )
 
         if retrieval_response["relevant_count"] == 0:
-            answer = (
-                _NO_INFO_PREFIX
-                + " in the uploaded document to answer that question."
-            )
+            answer = _NO_INFO_PREFIX + " in the uploaded document to answer that question."
         else:
             with st.spinner("Generating answer…"):
                 answer = llm_service.generate_answer(
@@ -1002,10 +764,12 @@ def main() -> None:
                 )
 
         st.session_state.messages.append({"role": "user", "content": question})
-        st.session_state.messages.append({"role": "assistant", "content": answer})
-        st.session_state.latest_answer = answer
-        st.session_state.latest_sources = retrieval_response["relevant_matches"]
-        st.session_state.latest_metrics = retrieval_response["metrics"]
+        st.session_state.messages.append({
+            "role": "assistant",
+            "content": answer,
+            "sources": retrieval_response["relevant_matches"],
+            "metrics": retrieval_response["metrics"],
+        })
         st.rerun()
     except (EmbeddingServiceError, VectorStoreError, LLMServiceError) as exc:
         st.error(str(exc))
