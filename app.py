@@ -553,18 +553,18 @@ def main() -> None:
     messages = st.session_state.messages
 
     if messages:
-        st.markdown('<div class="chat-thread">', unsafe_allow_html=True)
         for msg in messages:
-            st.markdown(
-                _build_message_html(
-                    role=msg["role"],
-                    content=msg["content"],
-                    sources=msg.get("sources"),
-                    metrics=msg.get("metrics"),
-                ),
-                unsafe_allow_html=True,
-            )
-        st.markdown('</div>', unsafe_allow_html=True)
+            with st.chat_message(msg["role"]):
+                st.markdown(msg["content"])
+                if msg.get("sources"):
+                    sources = []
+                    for src in msg["sources"]:
+                        if getattr(src, "page", None) is not None:
+                            sources.append(f"{src.source} · p.{src.page}")
+                        else:
+                            sources.append(f"{src.source} · chunk {src.chunk_index}")
+                    if sources:
+                        st.caption("Sources: " + ", ".join(sources))
     else:
         # Empty state with suggestion chips
         st.markdown(
@@ -614,9 +614,6 @@ def main() -> None:
         st.session_state.pending_question = None
     else:
         question = st.chat_input(placeholder, disabled=not source_ready, key="chat_input")
-
-    # ── Inject JS (after all HTML has been rendered) ─────────────────────────
-    st.markdown(_CHAT_JS, unsafe_allow_html=True)
 
     # ── Handle file upload ───────────────────────────────────────────────────
     if uploaded_file is not None:
