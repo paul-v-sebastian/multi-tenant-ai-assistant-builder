@@ -1,0 +1,81 @@
+name: Deploy
+
+on:
+  workflow_dispatch:
+  workflow_run:
+    workflows: ["Build"]
+    types:
+      - completed
+
+jobs:
+  deploy:
+    if: >
+      github.event_name == 'workflow_dispatch' ||
+      (
+        github.event.workflow_run.conclusion == 'success' &&
+        github.event.workflow_run.head_branch == github.event.repository.default_branch
+      )
+    runs-on: ubuntu-latest
+    environment:
+      name: test
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+
+      - name: Configure SSH
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.TEST_DEPLOY_SSH_PRIVATE_KEY }}
+          SSH_KNOWN_HOSTS: ${{ secrets.TEST_DEPLOY_SSH_KNOWN_HOSTS }}
+        run: |
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$SSH_PRIVATE_KEY" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          printf '%s\n' "$SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          chmod 644 ~/.ssh/known_hosts
+
+      - name: Sync application files
+        env:
+          DEPLOY_HOST: ${{ secrets.TEST_DEPLOY_HOST }}
+          DEPLOY_PATH: ${{ secrets.TEST_DEPLOY_PATH }}
+          DEPLOY_PORT: ${{ secrets.TEST_DEPLOY_PORT }}
+          DEPLOY_USER: ${{ secrets.TEST_DEPLOY_USER }}
+        run: |
+          ssh -p "${DEPLOY_PORT:-22}" "${DEPLOY_USER}@${DEPLOY_HOST}" "mkdir -p '${DEPLOY_PATH}'"
+          rsync -az --delete \
+            --exclude '.git/' \
+            --exclude '.github/' \
+            --exclude '.venv/' \
+            --exclude '__pycache__/' \
+            -e "ssh -p ${DEPLOY_PORT:-22}" \
+            ./ "${DEPLOY_USER}@${DEPLOY_HOST}:${DEPLOY_PATH}/"
+
+      - name: Install dependencies and restart app
+        env:
+          DEPLOY_HOST: ${{ secrets.TEST_DEPLOY_HOST }}
+          DEPLOY_PATH: ${{ secrets.TEST_DEPLOY_PATH }}
+          DEPLOY_PORT: ${{ secrets.TEST_DEPLOY_PORT }}
+          DEPLOY_USER: ${{ secrets.TEST_DEPLOY_USER }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          PINECONE_API_KEY: ${{ secrets.PINECONE_API_KEY }}
+          PINECONE_INDEX_NAME: ${{ secrets.PINECONE_INDEX_NAME }}
+          RESTART_COMMAND: ${{ secrets.TEST_DEPLOY_RESTART_COMMAND }}
+        run: |
+          ssh -p "${DEPLOY_PORT:-22}" "${DEPLOY_USER}@${DEPLOY_HOST}" \
+            "export APP_DIR='${DEPLOY_PATH}' OPENAI_API_KEY='${OPENAI_API_KEY}' PINECONE_API_KEY='${PINECONE_API_KEY}' PINECONE_INDEX_NAME='${PINECONE_INDEX_NAME}' RESTART_COMMAND='${RESTART_COMMAND}'; bash -se" <<'EOF'
+          set -euo pipefail
+          cd "$APP_DIR"
+          python3 -m venv .venv
+          . .venv/bin/activate
+          pip install --upgrade pip
+          pip install -r requirements.txt
+          cat > .env <<ENVVARS
+          OPENAI_API_KEY=$OPENAI_API_KEY
+          PINECONE_API_KEY=$PINECONE_API_KEY
+          PINECONE_INDEX_NAME=$PINECONE_INDEX_NAME
+          ENVVARS
+          chmod 600 .env
+          eval "$RESTART_COMMAND"
+          EOF

@@ -68,6 +68,38 @@ Required:
 streamlit run app.py
 ```
 
+## CI/CD Workflows
+
+This repository includes three lightweight GitHub Actions workflows:
+
+- `build`: installs dependencies and runs `pytest`
+- `deploy`: copies the current code to a test host over SSH, refreshes `.env`, installs dependencies, and runs a restart command
+- `health-check`: calls the deployed app URL and verifies the response contains `PDF RAG Chatbot`
+
+### Required GitHub Actions Secrets
+
+Create these repository or environment secrets before enabling deployment:
+
+- `TEST_DEPLOY_HOST`
+- `TEST_DEPLOY_USER`
+- `TEST_DEPLOY_PORT` (optional, defaults to `22`)
+- `TEST_DEPLOY_PATH`
+- `TEST_DEPLOY_SSH_PRIVATE_KEY`
+- `TEST_DEPLOY_SSH_KNOWN_HOSTS`
+- `TEST_DEPLOY_RESTART_COMMAND`
+- `TEST_APP_URL`
+- `OPENAI_API_KEY`
+- `PINECONE_API_KEY`
+- `PINECONE_INDEX_NAME`
+
+### Test Host Expectations
+
+The test environment should already have:
+
+- SSH access for the configured deploy user
+- Python 3 available as `python3`
+- a restart command that brings the Streamlit app back up after files are synced
+
 ## RAG Configuration
 
 - Chunk size: 200 words
