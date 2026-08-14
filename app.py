@@ -318,6 +318,16 @@ def clear_conversation() -> None:
     st.session_state.messages = []
 
 
+def is_chat_ready(state: dict | None = None) -> bool:
+    """A document is ready to chat once it is uploaded and indexed."""
+    if state is None:
+        state = st.session_state
+    namespace = state.get("namespace")
+    doc_name = state.get("document_name")
+    chunk_count = state.get("chunk_count", 0)
+    return bool(namespace and doc_name and chunk_count > 0)
+
+
 def _remove_document() -> None:
     st.session_state.document_id = None
     st.session_state.document_name = None
@@ -557,10 +567,6 @@ def main() -> None:
         st.markdown('</div>', unsafe_allow_html=True)
     else:
         # Empty state with suggestion chips
-        suggestions_html = "".join(
-            f'<button class="suggestion-chip" data-q="{_esc(q)}">{_esc(q)}</button>'
-            for q in _SUGGESTION_CHIPS
-        )
         st.markdown(
             '<div class="empty-state">'
             '<div class="empty-state-icon">💬</div>'
@@ -568,10 +574,17 @@ def main() -> None:
             '<div class="empty-state-sub">'
             'Attach a PDF with the 📎 button below, then ask a question.'
             '</div>'
-            f'<div class="suggestion-chips">{suggestions_html}</div>'
             '</div>',
             unsafe_allow_html=True,
         )
+        suggestion_question = None
+        for q in _SUGGESTION_CHIPS:
+            suggestion_key = f"suggestion_{hashlib.sha256(q.encode()).hexdigest()[:12]}"
+            if st.button(q, key=suggestion_key, use_container_width=True):
+                suggestion_question = q
+                break
+        if suggestion_question:
+            st.session_state.pending_question = suggestion_question
 
     # ── File attachment chip + remove (when a doc is loaded) ─────────────────
     doc_name = st.session_state.document_name
@@ -590,13 +603,17 @@ def main() -> None:
     )
 
     # ── Chat input ───────────────────────────────────────────────────────────
-    source_ready = bool(st.session_state.namespace)
+    source_ready = is_chat_ready()
     placeholder = (
         "Ask a question about the document…"
         if source_ready
         else "Attach a PDF first to start chatting…"
     )
-    question = st.chat_input(placeholder, disabled=not source_ready, key="chat_input")
+    if "pending_question" in st.session_state and st.session_state.pending_question:
+        question = st.session_state.pending_question
+        st.session_state.pending_question = None
+    else:
+        question = st.chat_input(placeholder, disabled=not source_ready, key="chat_input")
 
     # ── Inject JS (after all HTML has been rendered) ─────────────────────────
     st.markdown(_CHAT_JS, unsafe_allow_html=True)
@@ -611,6 +628,7 @@ def main() -> None:
                 vector_store = build_vector_store(config)
                 with st.spinner("Indexing PDF…"):
                     ingest_pdf(uploaded_file, config, embedding_service, vector_store)
+                st.rerun()
             except (PDFProcessingError, EmbeddingServiceError, VectorStoreError) as exc:
                 st.error(str(exc))
 
