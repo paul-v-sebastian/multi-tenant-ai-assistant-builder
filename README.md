@@ -73,8 +73,8 @@ streamlit run app.py
 This repository includes three lightweight GitHub Actions workflows:
 
 - `build`: installs dependencies and runs `pytest`
-- `deploy`: copies the current code to a test host over SSH, refreshes `.env`, installs dependencies, and runs a restart command
-- `health-check`: calls the deployed app URL and verifies the response contains `PDF RAG Chatbot`
+- `deploy`: runs on pushes to `main` or manual dispatch, copies the current code to a test host over SSH, refreshes `.env`, installs dependencies, and runs a restart command
+- `health-check`: runs after the deploy workflow succeeds or by manual dispatch, then calls the deployed app URL and verifies the response contains `PDF RAG Chatbot`
 
 ### Required GitHub Actions Secrets
 

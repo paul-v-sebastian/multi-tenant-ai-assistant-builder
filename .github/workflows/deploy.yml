@@ -1,20 +1,16 @@
 name: Deploy
 
 on:
+  push:
+    branches:
+      - main
   workflow_dispatch:
-  workflow_run:
-    workflows: ["Build"]
-    types:
-      - completed
+
+permissions:
+  contents: read
 
 jobs:
   deploy:
-    if: >
-      github.event_name == 'workflow_dispatch' ||
-      (
-        github.event.workflow_run.conclusion == 'success' &&
-        github.event.workflow_run.head_branch == github.event.repository.default_branch
-      )
     runs-on: ubuntu-latest
     environment:
       name: test
@@ -22,8 +18,6 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
 
       - name: Configure SSH
         env:
