@@ -760,5 +760,4 @@ def main() -> None:
         st.error(str(exc))
 
 
-if __name__ == "__main__":
-    main()
+main()
