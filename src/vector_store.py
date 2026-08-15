@@ -65,9 +65,8 @@ class PineconeVectorStore:
                 "values": embedding,
                 "metadata": {
                     "text": chunk.text,
-                    "source": chunk.source,
+                    "source_filename": chunk.source,
                     "chunk_index": chunk.chunk_index,
-                    "page": chunk.page,
                 },
             }
             for chunk, embedding in zip(chunks, embeddings)
@@ -99,9 +98,13 @@ class PineconeVectorStore:
             RetrievedChunk(
                 chunk_id=_get_match_value(match, "id", ""),
                 text=_get_metadata_value(match, "text", ""),
-                source=_get_metadata_value(match, "source", "unknown"),
+                source=_get_metadata_value(
+                    match,
+                    "source_filename",
+                    _get_metadata_value(match, "source", "unknown"),
+                ),
                 chunk_index=int(_get_metadata_value(match, "chunk_index", 0)),
-                page=_get_metadata_value(match, "page", None),
+                page=None,
                 score=float(_get_match_value(match, "score", 0.0)),
             )
             for match in response_matches
@@ -113,6 +116,28 @@ class PineconeVectorStore:
             "relevant_matches": relevant_matches,
             "relevant_count": len(relevant_matches),
             "metrics": metrics,
+        }
+
+    def describe_namespace(self, namespace: str) -> dict:
+        try:
+            stats = self.index.describe_index_stats()
+        except Exception as exc:  # pragma: no cover - SDK errors vary
+            raise VectorStoreError(f"Failed to describe Pinecone index: {exc}") from exc
+
+        namespaces = stats.get("namespaces", {}) if isinstance(stats, dict) else getattr(stats, "namespaces", {})
+        namespace_stats = namespaces.get(namespace, {}) if isinstance(namespaces, dict) else getattr(namespaces, namespace, {})
+        vector_count = (
+            namespace_stats.get("vector_count", 0)
+            if isinstance(namespace_stats, dict)
+            else getattr(namespace_stats, "vector_count", 0)
+        )
+        total_vector_count = stats.get("total_vector_count", 0) if isinstance(stats, dict) else getattr(stats, "total_vector_count", 0)
+        dimension = stats.get("dimension", self.dimension) if isinstance(stats, dict) else getattr(stats, "dimension", self.dimension)
+        return {
+            "namespace": namespace,
+            "namespace_vector_count": int(vector_count),
+            "total_vector_count": int(total_vector_count),
+            "dimension": int(dimension),
         }
 
 

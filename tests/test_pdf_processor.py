@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import pymupdf
 import pytest
+import tiktoken
 
-from src.pdf_processor import PDFProcessingError, PageText, build_chunks, extract_pdf_pages
+from src.pdf_processor import PDFProcessingError, PageText, build_chunk_id, build_chunks, extract_pdf_pages
 
 
 def build_pdf_bytes(page_texts: list[str]) -> bytes:
@@ -28,16 +29,23 @@ def test_extract_pdf_pages_returns_text_with_page_numbers():
 
 
 def test_build_chunks_preserves_overlap():
-    words = [f"word{i}" for i in range(1, 261)]
+    words = [f"word{i}" for i in range(1, 401)]
     pages = [PageText(page_number=1, text=" ".join(words))]
 
     chunks = build_chunks(pages, source="sample.pdf", chunk_size=200, overlap=40)
 
-    assert len(chunks) == 2
-    first_words = chunks[0].text.split()
-    second_words = chunks[1].text.split()
-    assert len(first_words) == 200
-    assert first_words[-40:] == second_words[:40]
+    assert len(chunks) >= 2
+    encoding = tiktoken.get_encoding("cl100k_base")
+    first_tokens = encoding.encode(chunks[0].text)
+    second_tokens = encoding.encode(chunks[1].text)
+    assert len(first_tokens) <= 200
+    assert first_tokens[-40:] == second_tokens[:40]
+    assert chunks[0].chunk_id == "doc-0"
+    assert chunks[1].chunk_id == "doc-1"
+
+
+def test_build_chunk_id_matches_poc_format():
+    assert build_chunk_id(7) == "doc-7"
 
 
 def test_extract_pdf_pages_raises_for_empty_pdf():

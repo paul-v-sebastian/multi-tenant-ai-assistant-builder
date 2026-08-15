@@ -27,7 +27,6 @@ def test_calculate_retrieval_metrics_returns_score_based_proxies():
     assert metrics["retrieved_count"] == 3
     assert metrics["relevant_count"] == 2
     assert metrics["average_score"] == (0.91 + 0.84) / 2
-    assert metrics["precision_proxy"] == metrics["average_score"]
-    assert metrics["recall_proxy"] == 2 / 3
+    assert metrics["precision"] == metrics["average_score"]
+    assert metrics["recall"] == 2 / 3
     assert metrics["scores"] == [0.91, 0.84, 0.52]
-

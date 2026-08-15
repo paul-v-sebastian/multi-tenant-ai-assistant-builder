@@ -36,8 +36,8 @@ def calculate_retrieval_metrics(
         "relevant_count": len(relevant_matches),
         "threshold": min_confidence_score,
         "average_score": average_score,
-        "precision_proxy": average_score,
-        "recall_proxy": (len(relevant_matches) / top_k) if top_k else 0.0,
+        "precision": average_score,
+        "recall": (len(relevant_matches) / top_k) if top_k else 0.0,
         "scores": [match.score for match in matches],
     }
 
@@ -53,8 +53,7 @@ def format_metrics_for_display(metrics: dict) -> dict[str, str]:
         "Retrieved": str(metrics["retrieved_count"]),
         "Relevant": str(metrics["relevant_count"]),
         "Threshold": f'{metrics["threshold"]:.2f}',
-        "Average score (retrieval-score-based precision proxy)": f'{metrics["average_score"]:.2f}',
-        "Recall proxy (retrieval-score-based)": f'{metrics["recall_proxy"]:.2f}',
+        "Precision": f'{metrics["precision"]:.2f}',
+        "Recall": f'{metrics["recall"]:.2f}',
         "Individual similarity scores": ", ".join(f"{score:.2f}" for score in metrics["scores"]) or "None",
     }
-
