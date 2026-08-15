@@ -17,13 +17,26 @@ def initialize_state() -> None:
 
 
 def clear_conversation() -> None:
-    st.session_state.messages = []
+    state = st.session_state
+    if isinstance(state, dict):
+        state["messages"] = []
+    else:
+        state.messages = []
 
 
 def show_chat_error(exc: Exception) -> None:
     error_message = f"⚠️ An error occurred: {exc}"
     st.error(error_message)
-    st.session_state.messages.append({"role": "assistant", "content": error_message})
+    state = st.session_state
+    messages = state.get("messages") if isinstance(state, dict) else getattr(state, "messages", None)
+    if messages is None:
+        if isinstance(state, dict):
+            state["messages"] = []
+            messages = state["messages"]
+        else:
+            state.messages = []
+            messages = state.messages
+    messages.append({"role": "assistant", "content": error_message})
 
 
 def build_llm_service() -> LLMService:
