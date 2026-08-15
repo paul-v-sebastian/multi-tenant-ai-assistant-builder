@@ -4,6 +4,7 @@ import streamlit as st
 
 from src.config import load_config
 from src.llm import LLMService, LLMServiceError
+from src.pdf_processor import PDFProcessingError, build_chunks, extract_pdf_pages
 
 _GLOBAL_CSS = """
 <style>
@@ -14,6 +15,8 @@ _GLOBAL_CSS = """
 
 def initialize_state() -> None:
     st.session_state.setdefault("messages", [])
+    st.session_state.setdefault("chunks", [])
+    st.session_state.setdefault("uploaded_file_name", None)
 
 
 def clear_conversation() -> None:
@@ -59,6 +62,28 @@ def main() -> None:
     if st.button("Clear chat"):
         clear_conversation()
         st.rerun()
+
+    # --- Phase 1: PDF upload and chunking ---
+    uploaded_file = st.file_uploader("Upload a PDF", type=["pdf"], label_visibility="collapsed")
+    if uploaded_file is not None:
+        if uploaded_file.name != st.session_state.uploaded_file_name:
+            try:
+                pdf_bytes = uploaded_file.read()
+                pages = extract_pdf_pages(pdf_bytes)
+                chunks = build_chunks(
+                    pages,
+                    source=uploaded_file.name,
+                    chunk_size=config.chunk_size_words,
+                    overlap=config.chunk_overlap_words,
+                )
+                st.session_state.chunks = chunks
+                st.session_state.uploaded_file_name = uploaded_file.name
+            except PDFProcessingError as exc:
+                st.error(f"PDF processing error: {exc}")
+
+    if st.session_state.chunks:
+        st.info(f"📄 **{st.session_state.uploaded_file_name}** — {len(st.session_state.chunks)} chunks extracted")
+    # --- End Phase 1 ---
 
     for message in st.session_state.messages:
         with st.chat_message(message["role"]):
