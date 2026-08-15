@@ -2,9 +2,14 @@ from __future__ import annotations
 
 import pymupdf
 import pytest
-import tiktoken
-
-from src.pdf_processor import PDFProcessingError, PageText, build_chunk_id, build_chunks, extract_pdf_pages
+from src.pdf_processor import (
+    PDFProcessingError,
+    PageText,
+    build_chunk_id,
+    build_chunks,
+    extract_pdf_pages,
+    get_cl100k_base_encoding,
+)
 
 
 def build_pdf_bytes(page_texts: list[str]) -> bytes:
@@ -35,7 +40,7 @@ def test_build_chunks_preserves_overlap():
     chunks = build_chunks(pages, source="sample.pdf", chunk_size=200, overlap=40)
 
     assert len(chunks) >= 2
-    encoding = tiktoken.get_encoding("cl100k_base")
+    encoding = get_cl100k_base_encoding()
     first_tokens = encoding.encode(chunks[0].text)
     second_tokens = encoding.encode(chunks[1].text)
     assert len(first_tokens) <= 200

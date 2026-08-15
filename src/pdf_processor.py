@@ -3,8 +3,11 @@ from __future__ import annotations
 import io
 import re
 from dataclasses import dataclass
+from functools import lru_cache
+from pathlib import Path
 
-import tiktoken
+from tiktoken import Encoding
+from tiktoken.load import load_tiktoken_bpe
 from PyPDF2 import PdfReader
 
 
@@ -60,7 +63,7 @@ def build_chunks(
     if not full_text:
         raise PDFProcessingError("The PDF contains no extractable text.")
 
-    encoding = tiktoken.get_encoding("cl100k_base")
+    encoding = get_cl100k_base_encoding()
     tokens = encoding.encode(full_text)
     if not tokens:
         raise PDFProcessingError("The PDF contains no extractable text.")
@@ -71,8 +74,8 @@ def build_chunks(
         chunk_tokens = tokens[start : start + chunk_size]
         if not chunk_tokens:
             continue
-        text = normalize_whitespace(encoding.decode(chunk_tokens))
-        if not text:
+        text = encoding.decode(chunk_tokens)
+        if not text.strip():
             continue
         chunks.append(
             DocumentChunk(
@@ -91,6 +94,23 @@ def build_chunks(
 
 def build_chunk_id(chunk_index: int) -> str:
     return f"doc-{chunk_index}"
+
+
+@lru_cache(maxsize=1)
+def get_cl100k_base_encoding() -> Encoding:
+    encoding_path = Path(__file__).resolve().parent / "assets" / "cl100k_base.tiktoken"
+    return Encoding(
+        name="cl100k_base",
+        pat_str=r"""'(?i:[sdmt]|ll|ve|re)|[^\r\n\p{L}\p{N}]?+\p{L}++|\p{N}{1,3}+| ?[^\s\p{L}\p{N}]++[\r\n]*+|\s++$|\s*[\r\n]|\s+(?!\S)|\s""",
+        mergeable_ranks=load_tiktoken_bpe(str(encoding_path), expected_hash="223921b76ee99bde995b7ff738513eef100fb51d18c93597a113bcffe865b2a7"),
+        special_tokens={
+            "<|endoftext|>": 100257,
+            "<|fim_prefix|>": 100258,
+            "<|fim_middle|>": 100259,
+            "<|fim_suffix|>": 100260,
+            "<|endofprompt|>": 100276,
+        },
+    )
 
 
 def normalize_whitespace(text: str) -> str:

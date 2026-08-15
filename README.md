@@ -1,14 +1,17 @@
 # simple-rag-app
 
-Simple MVP for a Streamlit chat app that wraps the OpenAI Chat Completions API and preserves conversation history.
+Simple Streamlit chat app with incremental PDF-based RAG on top of a preserved chat history.
 
 ## Overview
 
-This project now focuses on a minimal chat experience:
+This project includes:
 
 - Streamlit chat interface
 - OpenAI-backed assistant responses
 - Multi-turn conversation history in Streamlit session state
+- PDF upload and text extraction with PyPDF2
+- Token chunking with `tiktoken` `cl100k_base`
+- OpenAI embeddings stored in Pinecone
 
 ## Project Structure
 
@@ -17,8 +20,14 @@ app.py
 src/
   config.py
   llm.py
+  pdf_processor.py
+  embeddings.py
+  retrieval.py
+  vector_store.py
 tests/
   test_app_state.py
+  test_pdf_processor.py
+  test_retrieval.py
 requirements.txt
 .env.example
 README.md
@@ -38,10 +47,20 @@ cp .env.example .env
 Required:
 
 - `OPENAI_API_KEY`
+- `PINECONE_API_KEY` for PDF indexing and retrieval
 
 Optional:
 
-- `OPENAI_MODEL` is controlled in code through `src/config.py` (default: `gpt-4o-mini`)
+- `PINECONE_INDEX_NAME` (default: `my-pdf-index`)
+
+Current in-code defaults in `src/config.py`:
+
+- chunk size: `200`
+- chunk overlap: `40`
+- top k: `3`
+- min confidence score: `0.80`
+- embedding model: `text-embedding-ada-002`
+- chat model: `gpt-3.5-turbo`
 
 ## Running Locally
 
