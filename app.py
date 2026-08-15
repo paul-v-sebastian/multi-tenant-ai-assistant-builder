@@ -12,6 +12,7 @@ from src.embeddings import EmbeddingService, EmbeddingServiceError
 from src.llm import LLMService, LLMServiceError
 from src.pdf_processor import PDFProcessingError, build_chunks, extract_pdf_pages
 from src.retrieval import format_citation
+from src.tracing import get_langfuse, init_langfuse
 from src.vector_store import PineconeVectorStore, VectorStoreError
 
 _JUDGE_MODEL = "gpt-4o-mini"
@@ -46,6 +47,8 @@ def initialize_state() -> None:
     st.session_state.setdefault("eval_results", None)
     st.session_state.setdefault("last_retrieval_debug", None)
     st.session_state.setdefault("pending_question", None)
+    # Phase 5: per-message feedback state {message_index: True/False (submitted)}
+    st.session_state.setdefault("feedback_given", {})
 
 
 def clear_conversation() -> None:
@@ -117,6 +120,22 @@ def queue_chat_question() -> None:
 def process_chat_question(config, question: str) -> None:
     st.session_state.messages.append({"role": "user", "content": question})
     try:
+        lf = get_langfuse()
+        from langfuse import observe  # noqa: PLC0415
+
+        @observe(name="chat_turn", capture_input=False, capture_output=False)
+        def _traced_chat_turn() -> None:
+            if lf:
+                lf.update_current_span(input={"question": question})
+            _run_chat_turn(config, question, lf)
+
+        _traced_chat_turn()
+    except (LLMServiceError, EmbeddingServiceError, VectorStoreError, Exception) as exc:  # noqa: BLE001
+        show_chat_error(exc)
+
+
+def _run_chat_turn(config, question: str, lf) -> None:
+    try:
         llm_service = build_llm_service()
 
         if st.session_state.index_built and st.session_state.vector_namespace:
@@ -134,6 +153,20 @@ def process_chat_question(config, question: str) -> None:
             )
             metrics = retrieval_result["metrics"]
             relevant_matches = retrieval_result["relevant_matches"]
+
+            # --- Phase 4: instrument retrieval metrics on current span ---
+            if lf:
+                lf.update_current_span(
+                    metadata={
+                        "threshold": metrics["threshold"],
+                        "retrieved": metrics["retrieved_count"],
+                        "relevant": metrics["relevant_count"],
+                        "precision": metrics["precision"],
+                        "recall": metrics["recall"],
+                        "scores": metrics["scores"],
+                    }
+                )
+            # --- End Phase 4 retrieval metadata ---
 
             if not relevant_matches:
                 answer = llm_service.generate_no_context_answer(
@@ -168,9 +201,18 @@ def process_chat_question(config, question: str) -> None:
             citations = []
             debug_message = None
 
+        # --- Phase 4: capture answer on span; Phase 5: capture trace_id ---
+        if lf:
+            lf.update_current_span(output={"answer": answer})
+        trace_id = lf.get_current_trace_id() if lf else None
+        # --- End Phase 4/5 ---
+
         message: dict = {"role": "assistant", "content": answer}
         if citations:
             message["citations"] = citations
+        # Phase 5: attach trace_id to the message for feedback wiring
+        if trace_id:
+            message["trace_id"] = trace_id
         st.session_state["last_retrieval_debug"] = debug_message
         st.session_state.messages.append(message)
     except (LLMServiceError, EmbeddingServiceError, VectorStoreError, Exception) as exc:  # noqa: BLE001
@@ -245,6 +287,47 @@ def evaluate_response_with_judge(
         return {"score": int(parsed["score"]), "reason": str(parsed["reason"])}
     except (json.JSONDecodeError, KeyError, ValueError) as exc:
         raise LLMServiceError(f"Judge returned unexpected format: {raw!r}") from exc
+
+
+def _render_feedback_buttons(message_index: int, trace_id: str | None) -> None:
+    """Render compact 👍/👎 buttons under an assistant message.
+
+    Feedback is stored as a binary Langfuse score (1 = good, 0 = bad) attached
+    to the specific trace_id of that chat turn.  Once submitted the buttons are
+    replaced by a brief confirmation so the layout is not disrupted.
+    """
+    feedback_given = st.session_state.feedback_given
+    if feedback_given.get(message_index) is not None:
+        icon = "👍" if feedback_given[message_index] else "👎"
+        st.caption(f"{icon} Feedback recorded")
+        return
+
+    col_up, col_down, _ = st.columns([1, 1, 8])
+    with col_up:
+        if st.button("👍", key=f"fb_up_{message_index}", help="Good response"):
+            _submit_feedback(message_index, trace_id, score=1)
+            st.rerun()
+    with col_down:
+        if st.button("👎", key=f"fb_down_{message_index}", help="Bad response"):
+            _submit_feedback(message_index, trace_id, score=0)
+            st.rerun()
+
+
+def _submit_feedback(message_index: int, trace_id: str | None, score: int) -> None:
+    """Record feedback in session_state and, if Langfuse is configured, attach it to the trace."""
+    st.session_state.feedback_given[message_index] = bool(score)
+    lf = get_langfuse()
+    if lf and trace_id:
+        try:
+            lf.create_score(
+                trace_id=trace_id,
+                name="user_feedback",
+                value=score,
+                data_type="NUMERIC",
+                comment="thumbs_up" if score == 1 else "thumbs_down",
+            )
+        except Exception:  # noqa: BLE001
+            pass  # Feedback failure must never break the chat UI
 
 
 def render_evals_tab() -> None:
@@ -384,9 +467,45 @@ def render_chat_tab(config) -> None:
                 embeddings = embedding_svc.embed_texts(texts)
                 namespace = st.session_state.uploaded_file_name or "default"
                 vector_store = build_vector_store(config, index_name=st.session_state.cfg_index_name)
-                vector_store.upsert_chunks(st.session_state.chunks, embeddings, namespace=namespace)
-                st.session_state.index_built = True
-                st.session_state.vector_namespace = namespace
+
+                # --- Phase 4: instrument upload with a manual span ---
+                lf = get_langfuse()
+                if lf:
+                    with lf.start_as_current_observation(
+                        name="pdf_upload_and_index",
+                        as_type="span",
+                        input={"filename": uploaded_file.name if uploaded_file else namespace},
+                    ):
+                        vector_store.upsert_chunks(st.session_state.chunks, embeddings, namespace=namespace)
+                        st.session_state.index_built = True
+                        st.session_state.vector_namespace = namespace
+                        # Capture index metadata after a successful upsert
+                        try:
+                            ns_stats = vector_store.describe_namespace(namespace)
+                            lf.update_current_span(
+                                metadata={
+                                    "index_name": st.session_state.cfg_index_name,
+                                    "namespace": namespace,
+                                    "index_status": "ready",
+                                    "chunks_in_index": ns_stats["namespace_vector_count"],
+                                    "index_dimension": ns_stats["dimension"],
+                                }
+                            )
+                        except VectorStoreError:
+                            lf.update_current_span(
+                                metadata={
+                                    "index_name": st.session_state.cfg_index_name,
+                                    "namespace": namespace,
+                                    "index_status": "upserted",
+                                    "chunks_in_index": len(st.session_state.chunks),
+                                }
+                            )
+                else:
+                    vector_store.upsert_chunks(st.session_state.chunks, embeddings, namespace=namespace)
+                    st.session_state.index_built = True
+                    st.session_state.vector_namespace = namespace
+                # --- End Phase 4 upload span ---
+
         except (EmbeddingServiceError, VectorStoreError, Exception) as exc:  # noqa: BLE001
             st.error(f"Index build error: {exc}")
 
@@ -427,6 +546,11 @@ def render_chat_tab(config) -> None:
                     for label, value in st.session_state.last_retrieval_debug.items():
                         st.write(f"{label}: {value}")
 
+            # --- Phase 5: thumbs-up / thumbs-down feedback ---
+            if message["role"] == "assistant":
+                _render_feedback_buttons(index, message.get("trace_id"))
+            # --- End Phase 5 feedback ---
+
 
 def main() -> None:
     st.set_page_config(page_title="LLM Chat", page_icon="💬", layout="centered")
@@ -435,6 +559,13 @@ def main() -> None:
 
     config = load_config()
     initialize_state()
+
+    # Phase 4: initialise Langfuse once per session (no-op if keys absent)
+    init_langfuse(
+        secret_key=config.langfuse_secret_key,
+        public_key=config.langfuse_public_key,
+        host=config.langfuse_host,
+    )
 
     # --- Phase 5: Sidebar retrieval settings ---
     with st.sidebar:

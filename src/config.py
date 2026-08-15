@@ -28,6 +28,9 @@ class AppConfig:
     llm_model: str = "gpt-3.5-turbo"
     pinecone_cloud: str = "aws"
     pinecone_region: str = "us-east-1"
+    langfuse_secret_key: str = ""
+    langfuse_public_key: str = ""
+    langfuse_host: str = "https://cloud.langfuse.com"
 
     def with_overrides(self, **kwargs) -> "AppConfig":
         return replace(self, **kwargs)
@@ -51,4 +54,7 @@ def load_config() -> AppConfig:
         openai_api_key=read_secret("OPENAI_API_KEY"),
         pinecone_api_key=read_secret("PINECONE_API_KEY"),
         pinecone_index_name=read_secret("PINECONE_INDEX_NAME", "my-pdf-index"),
+        langfuse_secret_key=read_secret("LANGFUSE_SECRET_KEY"),
+        langfuse_public_key=read_secret("LANGFUSE_PUBLIC_KEY"),
+        langfuse_host=read_secret("LANGFUSE_HOST", "https://cloud.langfuse.com"),
     )
