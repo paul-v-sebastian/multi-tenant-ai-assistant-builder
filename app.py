@@ -319,6 +319,34 @@ def render_evals_tab() -> None:
         status_text.text("Evaluation complete.")
         st.session_state.eval_results = results
 
+    # --- Phase 3: Report display ---
+    eval_results = st.session_state.eval_results
+    if eval_results:
+        valid_scores = [r["Score (1-5)"] for r in eval_results if isinstance(r["Score (1-5)"], int) and r["Score (1-5)"] > 0]
+        avg_score = sum(valid_scores) / len(valid_scores) if valid_scores else 0.0
+        st.metric("Average Score (1-5)", f"{avg_score:.2f}")
+
+        st.dataframe(
+            eval_results,
+            column_order=["Query", "Expected Response", "Actual Response", "Score (1-5)", "Judge Feedback"],
+            use_container_width=True,
+        )
+
+        csv_buffer = io.StringIO()
+        writer = csv.DictWriter(
+            csv_buffer,
+            fieldnames=["Query", "Expected Response", "Actual Response", "Score (1-5)", "Judge Feedback"],
+        )
+        writer.writeheader()
+        writer.writerows(eval_results)
+        st.download_button(
+            label="⬇️ Download eval_report.csv",
+            data=csv_buffer.getvalue().encode("utf-8"),
+            file_name="eval_report.csv",
+            mime="text/csv",
+        )
+    # --- End Phase 3 ---
+
 
 def render_chat_tab(config) -> None:
     if st.button("Clear chat"):
