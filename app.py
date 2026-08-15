@@ -138,6 +138,8 @@ def main() -> None:
     for message in st.session_state.messages:
         with st.chat_message(message["role"]):
             st.markdown(message["content"])
+            if message.get("citations"):
+                st.markdown("**Sources:**\n" + "\n".join(message["citations"]))
 
     question = st.chat_input("Ask anything...")
     if not question:
@@ -182,6 +184,7 @@ def main() -> None:
                     question=question,
                     conversation_history=st.session_state.messages[:-1],
                 )
+                citations = []
             else:
                 context = "\n\n".join(
                     f"[Chunk {m.chunk_index}] {m.text}" for m in relevant_matches
@@ -191,16 +194,23 @@ def main() -> None:
                     context=context,
                     conversation_history=st.session_state.messages[:-1],
                 )
+                citations = [format_citation(m) for m in relevant_matches]
         else:
             # --- plain chat (no document uploaded / index not ready) ---
             answer = llm_service.generate_answer(
                 question=question,
                 conversation_history=st.session_state.messages[:-1],
             )
+            citations = []
 
-        st.session_state.messages.append({"role": "assistant", "content": answer})
+        message: dict = {"role": "assistant", "content": answer}
+        if citations:
+            message["citations"] = citations
+        st.session_state.messages.append(message)
         with st.chat_message("assistant"):
             st.markdown(answer)
+            if citations:
+                st.markdown("**Sources:**\n" + "\n".join(citations))
     except (LLMServiceError, EmbeddingServiceError, VectorStoreError, Exception) as exc:  # noqa: BLE001
         show_chat_error(exc)
 
