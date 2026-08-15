@@ -18,6 +18,8 @@ _GLOBAL_CSS = """
 </style>
 """
 
+_EVAL_REQUIRED_COLUMNS = ("Query", "Expected Response")
+
 
 def initialize_state() -> None:
     st.session_state.setdefault("messages", [])
@@ -31,14 +33,18 @@ def initialize_state() -> None:
     st.session_state.setdefault("cfg_min_confidence", 0.80)
     st.session_state.setdefault("eval_rows", None)
     st.session_state.setdefault("eval_file_name", None)
+    st.session_state.setdefault("last_retrieval_debug", None)
+    st.session_state.setdefault("pending_question", None)
 
 
 def clear_conversation() -> None:
     state = st.session_state
     if isinstance(state, dict):
         state["messages"] = []
+        state["last_retrieval_debug"] = None
     else:
         state.messages = []
+        state.last_retrieval_debug = None
 
 
 def show_chat_error(exc: Exception) -> None:
@@ -56,6 +62,10 @@ def show_chat_error(exc: Exception) -> None:
     if messages and messages[-1].get("role") == "user":
         messages.pop()
     messages.append({"role": "assistant", "content": error_message})
+    if isinstance(state, dict):
+        state["last_retrieval_debug"] = None
+    else:
+        state.last_retrieval_debug = None
 
 
 def build_llm_service() -> LLMService:
@@ -73,37 +83,111 @@ def build_vector_store(config, index_name: str | None = None) -> PineconeVectorS
     )
 
 
+def parse_eval_csv(csv_bytes: bytes) -> list[dict[str, str]]:
+    decoded = csv_bytes.decode("utf-8")
+    reader = csv.DictReader(io.StringIO(decoded))
+    fieldnames = reader.fieldnames or []
+    missing_columns = [column for column in _EVAL_REQUIRED_COLUMNS if column not in fieldnames]
+    if missing_columns:
+        raise ValueError(
+            "Invalid CSV schema. Missing required columns: "
+            + ", ".join(missing_columns)
+            + ". Expected columns: Query, Expected Response."
+        )
+    return list(reader)
+
+
+def queue_chat_question() -> None:
+    question = st.session_state.get("chat_input_value", "")
+    if question:
+        st.session_state["pending_question"] = question
+
+
+def process_chat_question(config, question: str) -> None:
+    st.session_state.messages.append({"role": "user", "content": question})
+    try:
+        llm_service = build_llm_service()
+
+        if st.session_state.index_built and st.session_state.vector_namespace:
+            embedding_svc = EmbeddingService(
+                api_key=config.openai_api_key,
+                model=config.embedding_model,
+            )
+            question_embedding = embedding_svc.embed_query(question)
+            vector_store = build_vector_store(config, index_name=st.session_state.cfg_index_name)
+            retrieval_result = vector_store.query(
+                embedding=question_embedding,
+                namespace=st.session_state.vector_namespace,
+                top_k=st.session_state.cfg_top_k,
+                min_confidence_score=st.session_state.cfg_min_confidence,
+            )
+            metrics = retrieval_result["metrics"]
+            relevant_matches = retrieval_result["relevant_matches"]
+
+            if not relevant_matches:
+                answer = llm_service.generate_no_context_answer(
+                    question=question,
+                    conversation_history=st.session_state.messages[:-1],
+                )
+                citations = []
+            else:
+                context = "\n\n".join(
+                    f"[Chunk {match.chunk_index}] {match.text}" for match in relevant_matches
+                )
+                answer = llm_service.generate_answer_with_context(
+                    question=question,
+                    context=context,
+                    conversation_history=st.session_state.messages[:-1],
+                )
+                citations = [format_citation(match) for match in relevant_matches]
+
+            debug_message = {
+                "Threshold": f"{metrics['threshold']:.2f}",
+                "Retrieved": str(metrics["retrieved_count"]),
+                "Relevant": str(metrics["relevant_count"]),
+                "Precision": f"{metrics['precision']:.2f}",
+                "Recall": f"{metrics['recall']:.2f}",
+                "Scores": ", ".join(f"{score:.2f}" for score in metrics["scores"]) if metrics["scores"] else "None",
+            }
+        else:
+            answer = llm_service.generate_answer(
+                question=question,
+                conversation_history=st.session_state.messages[:-1],
+            )
+            citations = []
+            debug_message = None
+
+        message: dict = {"role": "assistant", "content": answer}
+        if citations:
+            message["citations"] = citations
+        st.session_state["last_retrieval_debug"] = debug_message
+        st.session_state.messages.append(message)
+    except (LLMServiceError, EmbeddingServiceError, VectorStoreError, Exception) as exc:  # noqa: BLE001
+        show_chat_error(exc)
+
+
 def render_evals_tab() -> None:
     st.subheader("Evals")
     eval_file = st.file_uploader("Upload ground truth CSV", type=["csv"], key="eval_csv_uploader")
     if eval_file is None:
         return
 
-    if eval_file.name == st.session_state.eval_file_name and st.session_state.eval_rows is not None:
-        st.success(f"Loaded {len(st.session_state.eval_rows)} eval rows.")
-        return
-
     try:
-        decoded = eval_file.getvalue().decode("utf-8")
-        reader = csv.DictReader(io.StringIO(decoded))
-        expected_columns = {"Query", "Expected Response"}
-        fieldnames = set(reader.fieldnames or [])
-        missing_columns = sorted(expected_columns - fieldnames)
-        if missing_columns:
-            st.error(
-                "Invalid CSV schema. Missing required columns: "
-                + ", ".join(missing_columns)
-                + ". Expected columns: Query, Expected Response."
-            )
-            return
-
-        rows = list(reader)
+        rows = parse_eval_csv(eval_file.getvalue())
         st.session_state.eval_rows = rows
         st.session_state.eval_file_name = eval_file.name
         st.success(f"Loaded {len(rows)} eval rows.")
+    except ValueError as exc:
+        st.session_state.eval_rows = None
+        st.session_state.eval_file_name = None
+        st.error(str(exc))
     except UnicodeDecodeError:
+        st.session_state.eval_rows = None
+        st.session_state.eval_file_name = None
         st.error("Unable to read CSV. Please upload a UTF-8 encoded file.")
     except csv.Error as exc:
+        st.session_state.eval_rows = None
+        st.session_state.eval_file_name = None
         st.error(f"Unable to parse CSV: {exc}")
 
 
@@ -167,84 +251,26 @@ def render_chat_tab(config) -> None:
                 st.write("Chunks in index: 0")
     # --- End Phase 1 / Phase 2 ---
 
-    for message in st.session_state.messages:
+    pending_question = st.session_state.pop("pending_question", None)
+    if pending_question:
+        process_chat_question(config, pending_question)
+
+    last_message_index = len(st.session_state.messages) - 1
+    for index, message in enumerate(st.session_state.messages):
         with st.chat_message(message["role"]):
             st.markdown(message["content"])
             if message.get("citations"):
                 st.markdown("**Sources:**\n" + "\n".join(message["citations"]))
+            if (
+                index == last_message_index
+                and message["role"] == "assistant"
+                and st.session_state.last_retrieval_debug
+            ):
+                with st.expander("🧪 Retrieval debug info", expanded=False):
+                    for label, value in st.session_state.last_retrieval_debug.items():
+                        st.write(f"{label}: {value}")
 
-    question = st.chat_input("Ask anything...")
-    if not question:
-        return
-
-    st.session_state.messages.append({"role": "user", "content": question})
-    with st.chat_message("user"):
-        st.markdown(question)
-
-    try:
-        llm_service = build_llm_service()
-
-        if st.session_state.index_built and st.session_state.vector_namespace:
-            # --- Phase 3: retrieval-augmented answer ---
-            embedding_svc = EmbeddingService(
-                api_key=config.openai_api_key,
-                model=config.embedding_model,
-            )
-            question_embedding = embedding_svc.embed_query(question)
-            vector_store = build_vector_store(config, index_name=st.session_state.cfg_index_name)
-            retrieval_result = vector_store.query(
-                embedding=question_embedding,
-                namespace=st.session_state.vector_namespace,
-                top_k=st.session_state.cfg_top_k,
-                min_confidence_score=st.session_state.cfg_min_confidence,
-            )
-            metrics = retrieval_result["metrics"]
-            relevant_matches = retrieval_result["relevant_matches"]
-            with st.expander("🧪 Retrieval debug info", expanded=False):
-                st.write(f"Threshold: {metrics['threshold']:.2f}")
-                st.write(f"Retrieved: {metrics['retrieved_count']}")
-                st.write(f"Relevant: {metrics['relevant_count']}")
-                st.write(f"Precision: {metrics['precision']:.2f}")
-                st.write(f"Recall: {metrics['recall']:.2f}")
-                st.write(
-                    "Scores: "
-                    + (", ".join(f"{score:.2f}" for score in metrics["scores"]) if metrics["scores"] else "None")
-                )
-
-            if not relevant_matches:
-                answer = llm_service.generate_no_context_answer(
-                    question=question,
-                    conversation_history=st.session_state.messages[:-1],
-                )
-                citations = []
-            else:
-                context = "\n\n".join(
-                    f"[Chunk {m.chunk_index}] {m.text}" for m in relevant_matches
-                )
-                answer = llm_service.generate_answer_with_context(
-                    question=question,
-                    context=context,
-                    conversation_history=st.session_state.messages[:-1],
-                )
-                citations = [format_citation(m) for m in relevant_matches]
-        else:
-            # --- plain chat (no document uploaded / index not ready) ---
-            answer = llm_service.generate_answer(
-                question=question,
-                conversation_history=st.session_state.messages[:-1],
-            )
-            citations = []
-
-        message: dict = {"role": "assistant", "content": answer}
-        if citations:
-            message["citations"] = citations
-        st.session_state.messages.append(message)
-        with st.chat_message("assistant"):
-            st.markdown(answer)
-            if citations:
-                st.markdown("**Sources:**\n" + "\n".join(citations))
-    except (LLMServiceError, EmbeddingServiceError, VectorStoreError, Exception) as exc:  # noqa: BLE001
-        show_chat_error(exc)
+    st.chat_input("Ask anything...", key="chat_input_value", on_submit=queue_chat_question)
 
 
 def main() -> None:
