@@ -4,11 +4,12 @@ Simple MVP for a Streamlit chat app that wraps the OpenAI Chat Completions API a
 
 ## Overview
 
-This project now focuses on a minimal chat experience:
+This project now focuses on a minimal chat experience with optional source-backed responses:
 
 - Streamlit chat interface
 - OpenAI-backed assistant responses
 - Multi-turn conversation history in Streamlit session state
+- Optional Pinecone retrieval with inline source inspection
 
 ## Project Structure
 
@@ -42,6 +43,8 @@ Required:
 Optional:
 
 - `OPENAI_MODEL` is controlled in code through `src/config.py` (default: `gpt-4o-mini`)
+- `PINECONE_API_KEY` enables retrieved source chunks in assistant responses
+- `PINECONE_INDEX_NAME` overrides the default `pdf-rag-index`
 
 ## Running Locally
 
