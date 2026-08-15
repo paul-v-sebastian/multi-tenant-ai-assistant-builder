@@ -3,8 +3,10 @@ from __future__ import annotations
 import streamlit as st
 
 from src.config import load_config
+from src.embeddings import EmbeddingService, EmbeddingServiceError
 from src.llm import LLMService, LLMServiceError
 from src.pdf_processor import PDFProcessingError, build_chunks, extract_pdf_pages
+from src.vector_store import PineconeVectorStore, VectorStoreError
 
 _GLOBAL_CSS = """
 <style>
@@ -17,6 +19,8 @@ def initialize_state() -> None:
     st.session_state.setdefault("messages", [])
     st.session_state.setdefault("chunks", [])
     st.session_state.setdefault("uploaded_file_name", None)
+    st.session_state.setdefault("index_built", False)
+    st.session_state.setdefault("vector_namespace", None)
 
 
 def clear_conversation() -> None:
@@ -47,6 +51,16 @@ def build_llm_service() -> LLMService:
     return LLMService(api_key=config.openai_api_key, model=config.llm_model)
 
 
+def build_vector_store(config) -> PineconeVectorStore:
+    return PineconeVectorStore(
+        api_key=config.pinecone_api_key,
+        index_name=config.pinecone_index_name,
+        dimension=config.embedding_dimension,
+        cloud=config.pinecone_cloud,
+        region=config.pinecone_region,
+    )
+
+
 def main() -> None:
     st.set_page_config(page_title="LLM Chat", page_icon="💬", layout="centered")
     st.markdown(_GLOBAL_CSS, unsafe_allow_html=True)
@@ -63,7 +77,7 @@ def main() -> None:
         clear_conversation()
         st.rerun()
 
-    # --- Phase 1: PDF upload and chunking ---
+    # --- Phase 1: PDF upload and chunking / Phase 2: build index ---
     uploaded_file = st.file_uploader("Upload a PDF", type=["pdf"], label_visibility="collapsed")
     if uploaded_file is not None:
         if uploaded_file.name != st.session_state.uploaded_file_name:
@@ -78,12 +92,35 @@ def main() -> None:
                 )
                 st.session_state.chunks = chunks
                 st.session_state.uploaded_file_name = uploaded_file.name
+                st.session_state.index_built = False
+                st.session_state.vector_namespace = None
             except PDFProcessingError as exc:
                 st.error(f"PDF processing error: {exc}")
 
+    if st.session_state.chunks and not st.session_state.index_built:
+        try:
+            with st.spinner("Building vector index…"):
+                embedding_svc = EmbeddingService(
+                    api_key=config.openai_api_key,
+                    model=config.embedding_model,
+                )
+                texts = [chunk.text for chunk in st.session_state.chunks]
+                embeddings = embedding_svc.embed_texts(texts)
+                namespace = st.session_state.uploaded_file_name or "default"
+                vector_store = build_vector_store(config)
+                vector_store.upsert_chunks(st.session_state.chunks, embeddings, namespace=namespace)
+                st.session_state.index_built = True
+                st.session_state.vector_namespace = namespace
+        except (EmbeddingServiceError, VectorStoreError, Exception) as exc:  # noqa: BLE001
+            st.error(f"Index build error: {exc}")
+
     if st.session_state.chunks:
         st.info(f"📄 **{st.session_state.uploaded_file_name}** — {len(st.session_state.chunks)} chunks extracted")
-    # --- End Phase 1 ---
+        with st.expander("🔍 Index debug info", expanded=False):
+            st.write(f"Index built: {st.session_state.index_built}")
+            st.write(f"Namespace: {st.session_state.vector_namespace}")
+            st.write(f"Chunks in index: {len(st.session_state.chunks) if st.session_state.index_built else 0}")
+    # --- End Phase 1 / Phase 2 ---
 
     for message in st.session_state.messages:
         with st.chat_message(message["role"]):
