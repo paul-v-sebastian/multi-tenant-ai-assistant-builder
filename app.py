@@ -270,8 +270,6 @@ def render_chat_tab(config) -> None:
                     for label, value in st.session_state.last_retrieval_debug.items():
                         st.write(f"{label}: {value}")
 
-    st.chat_input("Ask anything...", key="chat_input_value", on_submit=queue_chat_question)
-
 
 def main() -> None:
     st.set_page_config(page_title="LLM Chat", page_icon="💬", layout="centered")
@@ -313,6 +311,10 @@ def main() -> None:
         render_chat_tab(config)
     with evals_tab:
         render_evals_tab()
+
+    # Placed outside the tab blocks so Streamlit can dock it to the bottom of the viewport.
+    # The on_submit callback only enqueues the question; it is consumed inside render_chat_tab.
+    st.chat_input("Ask anything...", key="chat_input_value", on_submit=queue_chat_question)
 
 
 if __name__ == "__main__":
