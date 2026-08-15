@@ -15,7 +15,7 @@ def test_clear_conversation(monkeypatch):
 
 
 def test_show_chat_error_renders_explicit_ui_error(monkeypatch):
-    fake_state = {"messages": []}
+    fake_state = {"messages": [{"role": "user", "content": "hello"}]}
     captured = {}
 
     monkeypatch.setattr(app.st, "session_state", fake_state, raising=False)
@@ -26,6 +26,7 @@ def test_show_chat_error_renders_explicit_ui_error(monkeypatch):
     assert captured["error"] == "⚠️ An error occurred: openai failed"
     assert fake_state["messages"][-1]["role"] == "assistant"
     assert fake_state["messages"][-1]["content"] == "⚠️ An error occurred: openai failed"
+    assert fake_state["messages"][0]["role"] == "assistant"
 
 
 def test_initialize_state_sets_index_keys(monkeypatch):

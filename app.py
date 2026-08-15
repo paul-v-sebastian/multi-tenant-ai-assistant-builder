@@ -44,6 +44,8 @@ def show_chat_error(exc: Exception) -> None:
         else:
             state.messages = []
             messages = state.messages
+    if messages and messages[-1].get("role") == "user":
+        messages.pop()
     messages.append({"role": "assistant", "content": error_message})
 
 
@@ -120,7 +122,17 @@ def main() -> None:
         with st.expander("🔍 Index debug info", expanded=False):
             st.write(f"Index built: {st.session_state.index_built}")
             st.write(f"Namespace: {st.session_state.vector_namespace}")
-            st.write(f"Chunks in index: {len(st.session_state.chunks) if st.session_state.index_built else 0}")
+            if st.session_state.index_built and st.session_state.vector_namespace:
+                try:
+                    namespace_stats = build_vector_store(config).describe_namespace(st.session_state.vector_namespace)
+                    st.write(f"Index status: ready")
+                    st.write(f"Chunks in index: {namespace_stats['namespace_vector_count']}")
+                    st.write(f"Index dimension: {namespace_stats['dimension']}")
+                except VectorStoreError as exc:
+                    st.write(f"Index status: unavailable ({exc})")
+            else:
+                st.write("Index status: not built")
+                st.write("Chunks in index: 0")
     # --- End Phase 1 / Phase 2 ---
 
     for message in st.session_state.messages:
@@ -144,7 +156,7 @@ def main() -> None:
                 api_key=config.openai_api_key,
                 model=config.embedding_model,
             )
-            question_embedding = embedding_svc.embed_texts([question])[0]
+            question_embedding = embedding_svc.embed_query(question)
             vector_store = build_vector_store(config)
             retrieval_result = vector_store.query(
                 embedding=question_embedding,
@@ -158,13 +170,18 @@ def main() -> None:
                 st.write(f"Threshold: {metrics['threshold']:.2f}")
                 st.write(f"Retrieved: {metrics['retrieved_count']}")
                 st.write(f"Relevant: {metrics['relevant_count']}")
+                st.write(f"Precision: {metrics['precision']:.2f}")
+                st.write(f"Recall: {metrics['recall']:.2f}")
                 st.write(
                     "Scores: "
                     + (", ".join(f"{score:.2f}" for score in metrics["scores"]) if metrics["scores"] else "None")
                 )
 
             if not relevant_matches:
-                answer = "I couldn't find relevant information in the uploaded document to answer that question."
+                answer = llm_service.generate_no_context_answer(
+                    question=question,
+                    conversation_history=st.session_state.messages[:-1],
+                )
             else:
                 context = "\n\n".join(
                     f"[Chunk {m.chunk_index}] {m.text}" for m in relevant_matches

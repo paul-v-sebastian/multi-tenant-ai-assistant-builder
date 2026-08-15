@@ -18,14 +18,14 @@ load_dotenv()
 class AppConfig:
     openai_api_key: str
     pinecone_api_key: str
-    pinecone_index_name: str = "pdf-rag-index"
+    pinecone_index_name: str = "my-pdf-index"
     chunk_size_words: int = 200
     chunk_overlap_words: int = 40
     top_k: int = 3
-    min_confidence_score: float = 0.50
-    embedding_model: str = "text-embedding-3-small"
+    min_confidence_score: float = 0.80
+    embedding_model: str = "text-embedding-ada-002"
     embedding_dimension: int = 1536
-    llm_model: str = "gpt-4o-mini"
+    llm_model: str = "gpt-3.5-turbo"
     pinecone_cloud: str = "aws"
     pinecone_region: str = "us-east-1"
 
@@ -50,5 +50,5 @@ def load_config() -> AppConfig:
     return AppConfig(
         openai_api_key=read_secret("OPENAI_API_KEY"),
         pinecone_api_key=read_secret("PINECONE_API_KEY"),
-        pinecone_index_name=read_secret("PINECONE_INDEX_NAME", "pdf-rag-index"),
+        pinecone_index_name=read_secret("PINECONE_INDEX_NAME", "my-pdf-index"),
     )
