@@ -8,6 +8,11 @@ from src.llm import LLMService, LLMServiceError
 _GLOBAL_CSS = """
 <style>
 .block-container { max-width: 900px; padding-top: 2rem; }
+.stChatInputContainer {
+    max-width: 900px;
+    margin-left: auto;
+    margin-right: auto;
+}
 </style>
 """
 
