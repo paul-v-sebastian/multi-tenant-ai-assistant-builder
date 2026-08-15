@@ -152,7 +152,16 @@ def main() -> None:
                 top_k=config.top_k,
                 min_confidence_score=config.min_confidence_score,
             )
+            metrics = retrieval_result["metrics"]
             relevant_matches = retrieval_result["relevant_matches"]
+            with st.expander("🧪 Retrieval debug info", expanded=False):
+                st.write(f"Threshold: {metrics['threshold']:.2f}")
+                st.write(f"Retrieved: {metrics['retrieved_count']}")
+                st.write(f"Relevant: {metrics['relevant_count']}")
+                st.write(
+                    "Scores: "
+                    + (", ".join(f"{score:.2f}" for score in metrics["scores"]) if metrics["scores"] else "None")
+                )
 
             if not relevant_matches:
                 answer = "I couldn't find relevant information in the uploaded document to answer that question."
