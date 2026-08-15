@@ -6,6 +6,7 @@ from src.config import load_config
 from src.embeddings import EmbeddingService, EmbeddingServiceError
 from src.llm import LLMService, LLMServiceError
 from src.pdf_processor import PDFProcessingError, build_chunks, extract_pdf_pages
+from src.retrieval import format_citation
 from src.vector_store import PineconeVectorStore, VectorStoreError
 
 _GLOBAL_CSS = """
@@ -136,14 +137,45 @@ def main() -> None:
 
     try:
         llm_service = build_llm_service()
-        answer = llm_service.generate_answer(
-            question=question,
-            conversation_history=st.session_state.messages[:-1],
-        )
+
+        if st.session_state.index_built and st.session_state.vector_namespace:
+            # --- Phase 3: retrieval-augmented answer ---
+            embedding_svc = EmbeddingService(
+                api_key=config.openai_api_key,
+                model=config.embedding_model,
+            )
+            question_embedding = embedding_svc.embed_texts([question])[0]
+            vector_store = build_vector_store(config)
+            retrieval_result = vector_store.query(
+                embedding=question_embedding,
+                namespace=st.session_state.vector_namespace,
+                top_k=config.top_k,
+                min_confidence_score=config.min_confidence_score,
+            )
+            relevant_matches = retrieval_result["relevant_matches"]
+
+            if not relevant_matches:
+                answer = "I couldn't find relevant information in the uploaded document to answer that question."
+            else:
+                context = "\n\n".join(
+                    f"[Chunk {m.chunk_index}] {m.text}" for m in relevant_matches
+                )
+                answer = llm_service.generate_answer_with_context(
+                    question=question,
+                    context=context,
+                    conversation_history=st.session_state.messages[:-1],
+                )
+        else:
+            # --- plain chat (no document uploaded / index not ready) ---
+            answer = llm_service.generate_answer(
+                question=question,
+                conversation_history=st.session_state.messages[:-1],
+            )
+
         st.session_state.messages.append({"role": "assistant", "content": answer})
         with st.chat_message("assistant"):
             st.markdown(answer)
-    except (LLMServiceError, Exception) as exc:  # noqa: BLE001
+    except (LLMServiceError, EmbeddingServiceError, VectorStoreError, Exception) as exc:  # noqa: BLE001
         show_chat_error(exc)
 
 
