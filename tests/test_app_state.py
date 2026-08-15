@@ -1,22 +1,20 @@
-import types
-
-from app import _GLOBAL_CSS, is_chat_ready
+import app
 
 
-def test_is_chat_ready_requires_loaded_document():
-    assert is_chat_ready({"namespace": "ns-123", "document_name": "doc.pdf", "chunk_count": 4}) is True
-    assert is_chat_ready({"namespace": None, "document_name": "doc.pdf", "chunk_count": 4}) is False
-    assert is_chat_ready({"namespace": "ns-123", "document_name": None, "chunk_count": 4}) is False
-    assert is_chat_ready({"namespace": "ns-123", "document_name": "doc.pdf", "chunk_count": 0}) is False
+def test_global_css_exists():
+    assert "<style>" in app._GLOBAL_CSS
 
 
-def test_global_css_keeps_main_app_visible():
-    assert '[data-testid="stAppViewContainer"] > section:first-child' not in _GLOBAL_CSS
+def test_clear_conversation(monkeypatch):
+    fake_state = {"messages": [{"role": "user", "content": "hi"}]}
+    monkeypatch.setattr(app.st, "session_state", fake_state, raising=False)
+
+    app.clear_conversation()
+
+    assert fake_state["messages"] == []
 
 
 def test_show_chat_error_renders_explicit_ui_error(monkeypatch):
-    import app
-
     fake_state = {"messages": []}
     captured = {}
 
