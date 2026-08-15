@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import csv
+import io
+
 import streamlit as st
 
 from src.config import load_config
@@ -26,6 +29,8 @@ def initialize_state() -> None:
     st.session_state.setdefault("cfg_index_name", "my-pdf-index")
     st.session_state.setdefault("cfg_top_k", 3)
     st.session_state.setdefault("cfg_min_confidence", 0.80)
+    st.session_state.setdefault("eval_rows", None)
+    st.session_state.setdefault("eval_file_name", None)
 
 
 def clear_conversation() -> None:
@@ -68,41 +73,41 @@ def build_vector_store(config, index_name: str | None = None) -> PineconeVectorS
     )
 
 
-def main() -> None:
-    st.set_page_config(page_title="LLM Chat", page_icon="💬", layout="centered")
-    st.markdown(_GLOBAL_CSS, unsafe_allow_html=True)
-    st.title("Simple LLM Chat")
-
-    config = load_config()
-    initialize_state()
-
-    # --- Phase 5: Sidebar retrieval settings ---
-    with st.sidebar:
-        st.markdown("### Retrieval settings")
-        st.session_state.cfg_index_name = st.text_input(
-            "Index name",
-            value=st.session_state.cfg_index_name,
-        )
-        st.session_state.cfg_top_k = st.number_input(
-            "Top K",
-            min_value=1,
-            max_value=20,
-            value=st.session_state.cfg_top_k,
-            step=1,
-        )
-        st.session_state.cfg_min_confidence = st.slider(
-            "Min confidence",
-            min_value=0.0,
-            max_value=1.0,
-            value=st.session_state.cfg_min_confidence,
-            step=0.01,
-        )
-    # --- End Phase 5 sidebar ---
-
-    if not config.openai_api_key:
-        st.warning("Set OPENAI_API_KEY to start chatting.")
+def render_evals_tab() -> None:
+    st.subheader("Evals")
+    eval_file = st.file_uploader("Upload ground truth CSV", type=["csv"], key="eval_csv_uploader")
+    if eval_file is None:
         return
 
+    if eval_file.name == st.session_state.eval_file_name and st.session_state.eval_rows is not None:
+        st.success(f"Loaded {len(st.session_state.eval_rows)} eval rows.")
+        return
+
+    try:
+        decoded = eval_file.getvalue().decode("utf-8")
+        reader = csv.DictReader(io.StringIO(decoded))
+        expected_columns = {"Query", "Expected Response"}
+        fieldnames = set(reader.fieldnames or [])
+        missing_columns = sorted(expected_columns - fieldnames)
+        if missing_columns:
+            st.error(
+                "Invalid CSV schema. Missing required columns: "
+                + ", ".join(missing_columns)
+                + ". Expected columns: Query, Expected Response."
+            )
+            return
+
+        rows = list(reader)
+        st.session_state.eval_rows = rows
+        st.session_state.eval_file_name = eval_file.name
+        st.success(f"Loaded {len(rows)} eval rows.")
+    except UnicodeDecodeError:
+        st.error("Unable to read CSV. Please upload a UTF-8 encoded file.")
+    except csv.Error as exc:
+        st.error(f"Unable to parse CSV: {exc}")
+
+
+def render_chat_tab(config) -> None:
     if st.button("Clear chat"):
         clear_conversation()
         st.rerun()
@@ -240,6 +245,48 @@ def main() -> None:
                 st.markdown("**Sources:**\n" + "\n".join(citations))
     except (LLMServiceError, EmbeddingServiceError, VectorStoreError, Exception) as exc:  # noqa: BLE001
         show_chat_error(exc)
+
+
+def main() -> None:
+    st.set_page_config(page_title="LLM Chat", page_icon="💬", layout="centered")
+    st.markdown(_GLOBAL_CSS, unsafe_allow_html=True)
+    st.title("Simple LLM Chat")
+
+    config = load_config()
+    initialize_state()
+
+    # --- Phase 5: Sidebar retrieval settings ---
+    with st.sidebar:
+        st.markdown("### Retrieval settings")
+        st.session_state.cfg_index_name = st.text_input(
+            "Index name",
+            value=st.session_state.cfg_index_name,
+        )
+        st.session_state.cfg_top_k = st.number_input(
+            "Top K",
+            min_value=1,
+            max_value=20,
+            value=st.session_state.cfg_top_k,
+            step=1,
+        )
+        st.session_state.cfg_min_confidence = st.slider(
+            "Min confidence",
+            min_value=0.0,
+            max_value=1.0,
+            value=st.session_state.cfg_min_confidence,
+            step=0.01,
+        )
+    # --- End Phase 5 sidebar ---
+
+    if not config.openai_api_key:
+        st.warning("Set OPENAI_API_KEY to start chatting.")
+        return
+
+    chat_tab, evals_tab = st.tabs(["Chat", "Evals"])
+    with chat_tab:
+        render_chat_tab(config)
+    with evals_tab:
+        render_evals_tab()
 
 
 if __name__ == "__main__":
