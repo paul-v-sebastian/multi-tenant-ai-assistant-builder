@@ -22,6 +22,10 @@ def initialize_state() -> None:
     st.session_state.setdefault("uploaded_file_name", None)
     st.session_state.setdefault("index_built", False)
     st.session_state.setdefault("vector_namespace", None)
+    # Phase 5 sidebar config defaults (POC values)
+    st.session_state.setdefault("cfg_index_name", "my-pdf-index")
+    st.session_state.setdefault("cfg_top_k", 3)
+    st.session_state.setdefault("cfg_min_confidence", 0.80)
 
 
 def clear_conversation() -> None:
@@ -54,10 +58,10 @@ def build_llm_service() -> LLMService:
     return LLMService(api_key=config.openai_api_key, model=config.llm_model)
 
 
-def build_vector_store(config) -> PineconeVectorStore:
+def build_vector_store(config, index_name: str | None = None) -> PineconeVectorStore:
     return PineconeVectorStore(
         api_key=config.pinecone_api_key,
-        index_name=config.pinecone_index_name,
+        index_name=index_name or config.pinecone_index_name,
         dimension=config.embedding_dimension,
         cloud=config.pinecone_cloud,
         region=config.pinecone_region,
@@ -71,6 +75,29 @@ def main() -> None:
 
     config = load_config()
     initialize_state()
+
+    # --- Phase 5: Sidebar retrieval settings ---
+    with st.sidebar:
+        st.markdown("### Retrieval settings")
+        st.session_state.cfg_index_name = st.text_input(
+            "Index name",
+            value=st.session_state.cfg_index_name,
+        )
+        st.session_state.cfg_top_k = st.number_input(
+            "Top K",
+            min_value=1,
+            max_value=20,
+            value=st.session_state.cfg_top_k,
+            step=1,
+        )
+        st.session_state.cfg_min_confidence = st.slider(
+            "Min confidence",
+            min_value=0.0,
+            max_value=1.0,
+            value=st.session_state.cfg_min_confidence,
+            step=0.01,
+        )
+    # --- End Phase 5 sidebar ---
 
     if not config.openai_api_key:
         st.warning("Set OPENAI_API_KEY to start chatting.")
@@ -110,7 +137,7 @@ def main() -> None:
                 texts = [chunk.text for chunk in st.session_state.chunks]
                 embeddings = embedding_svc.embed_texts(texts)
                 namespace = st.session_state.uploaded_file_name or "default"
-                vector_store = build_vector_store(config)
+                vector_store = build_vector_store(config, index_name=st.session_state.cfg_index_name)
                 vector_store.upsert_chunks(st.session_state.chunks, embeddings, namespace=namespace)
                 st.session_state.index_built = True
                 st.session_state.vector_namespace = namespace
@@ -124,7 +151,7 @@ def main() -> None:
             st.write(f"Namespace: {st.session_state.vector_namespace}")
             if st.session_state.index_built and st.session_state.vector_namespace:
                 try:
-                    namespace_stats = build_vector_store(config).describe_namespace(st.session_state.vector_namespace)
+                    namespace_stats = build_vector_store(config, index_name=st.session_state.cfg_index_name).describe_namespace(st.session_state.vector_namespace)
                     st.write(f"Index status: ready")
                     st.write(f"Chunks in index: {namespace_stats['namespace_vector_count']}")
                     st.write(f"Index dimension: {namespace_stats['dimension']}")
@@ -159,12 +186,12 @@ def main() -> None:
                 model=config.embedding_model,
             )
             question_embedding = embedding_svc.embed_query(question)
-            vector_store = build_vector_store(config)
+            vector_store = build_vector_store(config, index_name=st.session_state.cfg_index_name)
             retrieval_result = vector_store.query(
                 embedding=question_embedding,
                 namespace=st.session_state.vector_namespace,
-                top_k=config.top_k,
-                min_confidence_score=config.min_confidence_score,
+                top_k=st.session_state.cfg_top_k,
+                min_confidence_score=st.session_state.cfg_min_confidence,
             )
             metrics = retrieval_result["metrics"]
             relevant_matches = retrieval_result["relevant_matches"]
