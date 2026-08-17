@@ -43,6 +43,10 @@ def test_initialize_state_sets_index_keys(monkeypatch):
     assert fake_state["vector_namespace"] is None
     assert fake_state["pending_question"] is None
     assert fake_state["last_retrieval_debug"] is None
+    assert fake_state["tenant_id"] is None
+    assert fake_state["tenant_status"] is None
+    assert fake_state["tenant_authenticated"] is False
+    assert fake_state["tenant_share_url"] is None
 
 
 def test_build_vector_store_passes_config(monkeypatch):
@@ -98,3 +102,17 @@ def test_queue_chat_question_copies_chat_input_value(monkeypatch):
     app.queue_chat_question()
 
     assert fake_state["pending_question"] == "Hello there"
+
+
+def test_get_active_vector_namespace_prefers_tenant_id(monkeypatch):
+    fake_state = {"tenant_id": "tenant-123", "uploaded_file_name": "sample.pdf"}
+    monkeypatch.setattr(app.st, "session_state", fake_state, raising=False)
+
+    assert app.get_active_vector_namespace() == "tenant-123"
+
+
+def test_get_active_vector_namespace_falls_back_to_uploaded_file(monkeypatch):
+    fake_state = {"tenant_id": None, "uploaded_file_name": "sample.pdf"}
+    monkeypatch.setattr(app.st, "session_state", fake_state, raising=False)
+
+    assert app.get_active_vector_namespace() == "sample.pdf"

@@ -11,6 +11,7 @@ from src.config import load_config
 from src.embeddings import EmbeddingService, EmbeddingServiceError
 from src.llm import LLMService, LLMServiceError
 from src.pdf_processor import PDFProcessingError, build_chunks, extract_pdf_pages
+from src.tenants import build_tenant_namespace
 from src.retrieval import format_citation
 from src.tracing import get_langfuse, init_langfuse
 from src.vector_store import PineconeVectorStore, VectorStoreError
@@ -38,6 +39,10 @@ def initialize_state() -> None:
     st.session_state.setdefault("uploaded_file_name", None)
     st.session_state.setdefault("index_built", False)
     st.session_state.setdefault("vector_namespace", None)
+    st.session_state.setdefault("tenant_id", None)
+    st.session_state.setdefault("tenant_status", None)
+    st.session_state.setdefault("tenant_authenticated", False)
+    st.session_state.setdefault("tenant_share_url", None)
     # Phase 5 sidebar config defaults (POC values)
     st.session_state.setdefault("cfg_index_name", "my-pdf-index")
     st.session_state.setdefault("cfg_top_k", 3)
@@ -94,6 +99,13 @@ def build_vector_store(config, index_name: str | None = None) -> PineconeVectorS
         dimension=config.embedding_dimension,
         cloud=config.pinecone_cloud,
         region=config.pinecone_region,
+    )
+
+
+def get_active_vector_namespace() -> str | None:
+    return build_tenant_namespace(
+        tenant_id=st.session_state.get("tenant_id"),
+        fallback_namespace=st.session_state.get("uploaded_file_name") or "default",
     )
 
 
@@ -465,7 +477,7 @@ def render_chat_tab(config) -> None:
                 )
                 texts = [chunk.text for chunk in st.session_state.chunks]
                 embeddings = embedding_svc.embed_texts(texts)
-                namespace = st.session_state.uploaded_file_name or "default"
+                namespace = get_active_vector_namespace() or "default"
                 vector_store = build_vector_store(config, index_name=st.session_state.cfg_index_name)
 
                 # --- Phase 4: instrument upload with a manual span ---
