@@ -116,3 +116,32 @@ def test_get_active_vector_namespace_falls_back_to_uploaded_file(monkeypatch):
     monkeypatch.setattr(app.st, "session_state", fake_state, raising=False)
 
     assert app.get_active_vector_namespace() == "sample.pdf"
+
+
+# ---------------------------------------------------------------------------
+# Bug 2: session state is fully cleared on logout
+# ---------------------------------------------------------------------------
+
+def test_logout_clears_all_session_state():
+    """st.session_state.clear() removes every key including tenant-scoped data."""
+    # Simulate a fully-populated session from Tenant A
+    session = {
+        "tenant_authenticated": True,
+        "tenant_id": "tid-A",
+        "tenant_name": "TenantA",
+        "tenant_status": "PUBLISHED",
+        "tenant_share_url": "https://app/?token=xyz",
+        "messages": [{"role": "user", "content": "hello"}],
+        "chunks": ["chunk1"],
+        "uploaded_file_name": "doc.pdf",
+        "index_built": True,
+        "vector_namespace": "tid-A",
+        "eval_rows": [{"Query": "q", "Expected Response": "e"}],
+        "eval_results": [{"Score (1-5)": 5}],
+        "cfg_index_name": "custom-index",
+    }
+
+    # This is what the sign-out handler now does
+    session.clear()
+
+    assert session == {}

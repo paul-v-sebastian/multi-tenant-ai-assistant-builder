@@ -80,3 +80,24 @@ def test_verify_raises_when_tenant_id_claim_missing():
     token = jwt.encode({"sub": "someone"}, _SECRET, algorithm="HS256")
     with pytest.raises(ShareTokenError, match="missing the 'tenant_id' claim"):
         verify_share_token(token, _SECRET)
+
+
+# ---------------------------------------------------------------------------
+# Bug 3: token routing — verify_share_token drives the standalone-chat branch
+# ---------------------------------------------------------------------------
+
+def test_valid_token_yields_correct_tenant_id():
+    """A token generated for a tenant decodes back to that tenant's id."""
+    url = generate_share_token(_TENANT, _SECRET, base_url="https://app.example.com")
+    token = url.split("?token=")[1]
+    assert verify_share_token(token, _SECRET) == _TENANT
+
+
+def test_truncated_token_raises_share_token_error():
+    """A deliberately truncated JWT must raise ShareTokenError, not fall through."""
+    url = generate_share_token(_TENANT, _SECRET)
+    token = url.split("?token=")[1]
+    truncated = token[:10]
+    with pytest.raises(ShareTokenError):
+        verify_share_token(truncated, _SECRET)
+

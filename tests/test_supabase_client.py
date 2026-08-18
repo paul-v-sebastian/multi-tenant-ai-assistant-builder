@@ -121,6 +121,38 @@ def test_get_tenant_returns_row_dict():
 
 
 # ---------------------------------------------------------------------------
+# get_tenant_by_name  (Bug 1 fix)
+# ---------------------------------------------------------------------------
+
+def test_get_tenant_by_name_returns_none_when_not_found():
+    sc = _reset_module()
+    mock_client = _make_mock_client()
+    mock_client.execute.return_value = MagicMock(data=[])
+    sc._client = mock_client
+
+    result = sc.get_tenant_by_name("nonexistent")
+    assert result is None
+
+
+def test_get_tenant_by_name_returns_row_dict():
+    sc = _reset_module()
+    mock_client = _make_mock_client()
+    row = {"id": "abc-123", "name": "acme", "status": "DRAFT", "passkey_hash": "h"}
+    mock_client.execute.return_value = MagicMock(data=[row])
+    sc._client = mock_client
+
+    result = sc.get_tenant_by_name("acme")
+    assert result == row
+    mock_client.eq.assert_called_with("name", "acme")
+
+
+def test_get_tenant_by_name_raises_when_not_connected():
+    sc = _reset_module()
+    with pytest.raises(sc.SupabaseError, match="not connected"):
+        sc.get_tenant_by_name("acme")
+
+
+# ---------------------------------------------------------------------------
 # verify_tenant_passkey
 # ---------------------------------------------------------------------------
 
