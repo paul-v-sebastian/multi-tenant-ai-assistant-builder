@@ -15,7 +15,18 @@ from src.tenants import build_tenant_namespace
 from src.retrieval import format_citation
 from src.tracing import get_langfuse, init_langfuse
 from src.vector_store import PineconeVectorStore, VectorStoreError
-from src.supabase_client import get_supabase_status, init_supabase
+from src.supabase_client import (
+    get_supabase_status,
+    init_supabase,
+    create_tenant,
+    get_tenant,
+    verify_tenant_passkey,
+    update_tenant_status,
+    upsert_tenant_config,
+    save_eval_log,
+    SupabaseError,
+)
+from src.storage import upload_pdf, upload_eval_csv
 
 _JUDGE_MODEL = "gpt-4o-mini"
 _JUDGE_SYSTEM_PROMPT = (
@@ -41,6 +52,7 @@ def initialize_state() -> None:
     st.session_state.setdefault("index_built", False)
     st.session_state.setdefault("vector_namespace", None)
     st.session_state.setdefault("tenant_id", None)
+    st.session_state.setdefault("tenant_name", None)
     st.session_state.setdefault("tenant_status", None)
     st.session_state.setdefault("tenant_authenticated", False)
     st.session_state.setdefault("tenant_share_url", None)
@@ -343,6 +355,134 @@ def _submit_feedback(message_index: int, trace_id: str | None, score: int) -> No
             pass  # Feedback failure must never break the chat UI
 
 
+def _load_tenant_into_session(row: dict) -> None:
+    """Populate session_state from a fetched tenant row after successful auth."""
+    state = st.session_state
+    if isinstance(state, dict):
+        state["tenant_id"] = row["id"]
+        state["tenant_name"] = row.get("name", "")
+        state["tenant_status"] = row.get("status")
+        state["tenant_authenticated"] = True
+        state["tenant_share_url"] = row.get("share_token")
+    else:
+        state.tenant_id = row["id"]
+        state.tenant_name = row.get("name", "")
+        state.tenant_status = row.get("status")
+        state.tenant_authenticated = True
+        state.tenant_share_url = row.get("share_token")
+    # Restore persisted retrieval config (fall back to current defaults)
+    cfg = row.get("config") or {}
+    if "index_name" in cfg:
+        if isinstance(state, dict):
+            state["cfg_index_name"] = cfg["index_name"]
+        else:
+            state.cfg_index_name = cfg["index_name"]
+    if "top_k" in cfg:
+        if isinstance(state, dict):
+            state["cfg_top_k"] = int(cfg["top_k"])
+        else:
+            state.cfg_top_k = int(cfg["top_k"])
+    if "min_confidence" in cfg:
+        if isinstance(state, dict):
+            state["cfg_min_confidence"] = float(cfg["min_confidence"])
+        else:
+            state.cfg_min_confidence = float(cfg["min_confidence"])
+
+
+def render_tenant_tab() -> None:
+    """Tenant selection / creation screen (Phase 3)."""
+    st.subheader("Tenant Management")
+
+    if st.session_state.tenant_authenticated:
+        st.success(
+            f"✅ Authenticated as **{st.session_state.tenant_name}** "
+            f"(ID: `{st.session_state.tenant_id}`)"
+        )
+        if st.button("Sign out", key="tenant_signout"):
+            st.session_state.tenant_id = None
+            st.session_state.tenant_name = None
+            st.session_state.tenant_status = None
+            st.session_state.tenant_authenticated = False
+            st.session_state.tenant_share_url = None
+            st.rerun()
+        return
+
+    supabase_status, _ = get_supabase_status()
+    if supabase_status != "green":
+        st.warning(
+            "⚠️ Supabase is not connected. Configure `SUPABASE_URL` and "
+            "`SUPABASE_KEY` to enable tenant management."
+        )
+        return
+
+    flow = st.radio(
+        "What would you like to do?",
+        ["Select existing tenant", "Create new tenant"],
+        key="tenant_flow_radio",
+        horizontal=True,
+    )
+
+    if flow == "Create new tenant":
+        st.markdown("#### Create a new tenant")
+        new_name = st.text_input("Tenant name", key="new_tenant_name")
+        new_passkey = st.text_input(
+            "Passkey", type="password", key="new_tenant_passkey",
+            help="Choose a strong passkey — it will be bcrypt-hashed before storage."
+        )
+        new_passkey_confirm = st.text_input(
+            "Confirm passkey", type="password", key="new_tenant_passkey_confirm"
+        )
+
+        if st.button("Create tenant", key="btn_create_tenant"):
+            if not new_name.strip():
+                st.error("Tenant name cannot be empty.")
+            elif not new_passkey:
+                st.error("Passkey cannot be empty.")
+            elif new_passkey != new_passkey_confirm:
+                st.error("Passkeys do not match.")
+            else:
+                import bcrypt  # noqa: PLC0415
+                passkey_hash = bcrypt.hashpw(
+                    new_passkey.encode(), bcrypt.gensalt()
+                ).decode()
+                try:
+                    tenant_id = create_tenant(new_name.strip(), passkey_hash)
+                    row = get_tenant(tenant_id)
+                    if row:
+                        _load_tenant_into_session(row)
+                        st.success(f"Tenant created! Your tenant ID: `{tenant_id}`")
+                        st.info("📋 Save this ID — you will need it to sign in next time.")
+                        st.rerun()
+                except SupabaseError as exc:
+                    st.error(f"Failed to create tenant: {exc}")
+
+    else:  # Select existing tenant
+        st.markdown("#### Sign in to an existing tenant")
+        existing_id = st.text_input("Tenant ID (UUID)", key="existing_tenant_id")
+        existing_passkey = st.text_input(
+            "Passkey", type="password", key="existing_tenant_passkey"
+        )
+
+        if st.button("Sign in", key="btn_signin_tenant"):
+            if not existing_id.strip():
+                st.error("Tenant ID cannot be empty.")
+            elif not existing_passkey:
+                st.error("Passkey cannot be empty.")
+            else:
+                try:
+                    ok = verify_tenant_passkey(existing_id.strip(), existing_passkey)
+                    if ok:
+                        row = get_tenant(existing_id.strip())
+                        if row:
+                            _load_tenant_into_session(row)
+                            st.success(f"Welcome back, **{row.get('name', '')}**!")
+                            st.rerun()
+                    else:
+                        st.error("Incorrect passkey. Please try again.")
+                except SupabaseError as exc:
+                    st.error(f"Authentication error: {exc}")
+
+
 def render_knowledge_base_tab(config) -> None:
     st.subheader("Knowledge Base")
 
@@ -412,6 +552,31 @@ def render_knowledge_base_tab(config) -> None:
                     st.session_state.index_built = True
                     st.session_state.vector_namespace = namespace
 
+                # Phase 2: persist PDF to Supabase Storage when tenant is authenticated
+                if st.session_state.get("tenant_authenticated") and st.session_state.get("tenant_id"):
+                    try:
+                        upload_pdf(
+                            tenant_id=st.session_state.tenant_id,
+                            filename=uploaded_file.name,
+                            data=pdf_bytes,
+                        )
+                    except Exception:  # noqa: BLE001
+                        pass  # Storage upload failure must not block indexing
+
+                # Phase 4: advance status to INGESTED
+                tid = st.session_state.get("tenant_id")
+                if tid and st.session_state.get("tenant_status") == "DRAFT":
+                    try:
+                        update_tenant_status(tid, "INGESTED")
+                        st.session_state["tenant_status"] = "INGESTED"
+                        upsert_tenant_config(tid, {
+                            "index_name": st.session_state.cfg_index_name,
+                            "top_k": st.session_state.cfg_top_k,
+                            "min_confidence": st.session_state.cfg_min_confidence,
+                        })
+                    except SupabaseError:
+                        pass  # Status update failure must not block the UI
+
                 st.rerun()
 
         except (EmbeddingServiceError, VectorStoreError, Exception) as exc:  # noqa: BLE001
@@ -461,6 +626,20 @@ def render_evals_and_configs_tab(config) -> None:
         key="evals_cfg_min_confidence",
     )
 
+    # Phase 4: persist updated config to Supabase whenever tenant is authenticated
+    tid = st.session_state.get("tenant_id")
+    if tid and st.session_state.get("tenant_authenticated"):
+        if st.button("💾 Save retrieval settings", key="btn_save_cfg"):
+            try:
+                upsert_tenant_config(tid, {
+                    "index_name": st.session_state.cfg_index_name,
+                    "top_k": st.session_state.cfg_top_k,
+                    "min_confidence": st.session_state.cfg_min_confidence,
+                })
+                st.success("Settings saved.")
+            except SupabaseError as exc:
+                st.error(f"Failed to save settings: {exc}")
+
     st.markdown("---")
     st.subheader("Evals")
     eval_file = st.file_uploader("Upload ground truth CSV", type=["csv"], key="eval_csv_uploader")
@@ -473,6 +652,16 @@ def render_evals_and_configs_tab(config) -> None:
             st.session_state.eval_rows = rows
             st.session_state.eval_file_name = eval_file.name
             st.success(f"Loaded {len(rows)} eval rows.")
+            # Phase 2: persist CSV to Supabase Storage when tenant is authenticated
+            if st.session_state.get("tenant_authenticated") and st.session_state.get("tenant_id"):
+                try:
+                    upload_eval_csv(
+                        tenant_id=st.session_state.tenant_id,
+                        filename=eval_file.name,
+                        data=eval_file.getvalue(),
+                    )
+                except Exception:  # noqa: BLE001
+                    pass  # Storage upload failure must not block eval loading
         except ValueError as exc:
             st.session_state.eval_rows = None
             st.session_state.eval_file_name = None
@@ -533,6 +722,25 @@ def render_evals_and_configs_tab(config) -> None:
         status_text.text("Evaluation complete.")
         st.session_state.eval_results = results
 
+        # Phase 4: persist eval log + advance status to EVALUATED
+        tid = st.session_state.get("tenant_id")
+        if tid and st.session_state.get("tenant_status") == "INGESTED":
+            try:
+                save_eval_log(tid, [
+                    {
+                        "query": r["Query"],
+                        "expected": r["Expected Response"],
+                        "actual": r["Actual Response"],
+                        "score": r["Score (1-5)"],
+                        "reason": r["Judge Feedback"],
+                    }
+                    for r in results
+                ])
+                update_tenant_status(tid, "EVALUATED")
+                st.session_state["tenant_status"] = "EVALUATED"
+            except SupabaseError:
+                pass  # Persistence failure must not block the eval display
+
     # --- Phase 3: Report display ---
     eval_results = st.session_state.eval_results
     if eval_results:
@@ -560,6 +768,45 @@ def render_evals_and_configs_tab(config) -> None:
             mime="text/csv",
         )
     # --- End Phase 3 ---
+
+    # --- Phase 4 & 5: Publish button ---
+    if st.session_state.get("tenant_status") == "EVALUATED" and st.session_state.get("tenant_id"):
+        st.markdown("---")
+        st.subheader("Publish Assistant")
+        st.info("Your assistant has been evaluated. Publish it to generate a shareable URL.")
+        if st.button("🚀 Publish", key="btn_publish"):
+            from src.share import generate_share_token  # noqa: PLC0415
+            tid = st.session_state.tenant_id
+            cfg_share = load_config()
+            jwt_secret = getattr(cfg_share, "jwt_secret", "") or ""
+            if not jwt_secret:
+                st.error("Set JWT_SECRET in your environment to enable shareable URLs.")
+            else:
+                try:
+                    share_url = generate_share_token(
+                        tenant_id=tid,
+                        secret=jwt_secret,
+                        base_url=getattr(cfg_share, "app_base_url", "") or "",
+                    )
+                    # Persist share token and advance status
+                    from src.supabase_client import get_client as _get_client  # noqa: PLC0415
+                    _c = _get_client()
+                    if _c:
+                        _c.table("tenants").update({"share_token": share_url}).eq("id", tid).execute()
+                    update_tenant_status(tid, "PUBLISHED")
+                    st.session_state["tenant_status"] = "PUBLISHED"
+                    st.session_state["tenant_share_url"] = share_url
+                    st.success("✅ Published!")
+                    st.rerun()
+                except SupabaseError as exc:
+                    st.error(f"Publish failed: {exc}")
+
+    if st.session_state.get("tenant_status") == "PUBLISHED" and st.session_state.get("tenant_share_url"):
+        st.markdown("---")
+        st.subheader("Share your Assistant")
+        share_url = st.session_state.tenant_share_url
+        st.text_input("Shareable URL", value=share_url, key="share_url_display", disabled=True)
+        st.caption("Copy this URL and share it with your users.")
 
 
 def render_chat_tab(config) -> None:
@@ -627,6 +874,36 @@ def _render_supabase_indicator() -> None:
     st.sidebar.markdown(html, unsafe_allow_html=True)
 
 
+def _render_tenant_sidebar_badge() -> None:
+    """Show the current tenant name and lifecycle status badge in the sidebar."""
+    tenant_name = st.session_state.get("tenant_name")
+    tenant_status = st.session_state.get("tenant_status")
+    if not tenant_name:
+        return
+
+    status_colour = {
+        "DRAFT": "#9e9e9e",
+        "INGESTED": "#1e88e5",
+        "EVALUATED": "#fb8c00",
+        "PUBLISHED": "#43a047",
+    }
+    colour = status_colour.get(str(tenant_status), "#9e9e9e") if tenant_status else "#9e9e9e"
+    label = str(tenant_status) if tenant_status else "—"
+    html = (
+        f'<div style="'
+        "display:flex;align-items:center;gap:0.4rem;"
+        "background:rgba(0,0,0,0.04);border-radius:999px;"
+        "padding:0.15rem 0.65rem 0.15rem 0.4rem;"
+        "font-size:0.75rem;font-weight:500;color:#333;"
+        'margin-bottom:0.5rem;">'
+        f'<span style="width:10px;height:10px;border-radius:50%;'
+        f'background:{colour};flex-shrink:0;display:inline-block;"></span>'
+        f"Tenant: {tenant_name} · {label}"
+        "</div>"
+    )
+    st.sidebar.markdown(html, unsafe_allow_html=True)
+
+
 def main() -> None:
     st.set_page_config(page_title="AI Assistant Builder", page_icon="🤖", layout="centered")
     st.markdown(_GLOBAL_CSS, unsafe_allow_html=True)
@@ -638,6 +915,7 @@ def main() -> None:
     # Phase 1.5: probe Supabase connection and render the status indicator
     init_supabase(url=config.supabase_url, key=config.supabase_key)
     _render_supabase_indicator()
+    _render_tenant_sidebar_badge()
 
     # Phase 4: initialise Langfuse once per session (no-op if keys absent)
     init_langfuse(
@@ -651,12 +929,22 @@ def main() -> None:
         return
 
     kb_indexed = st.session_state.index_built and bool(st.session_state.vector_namespace)
+    tenant_authed = st.session_state.get("tenant_authenticated", False)
 
-    kb_tab, chat_tab, evals_tab = st.tabs(["Knowledge Base", "Assistant Chat", "Evals & Configs"])
+    tenant_tab, kb_tab, chat_tab, evals_tab = st.tabs(
+        ["Tenant", "Knowledge Base", "Assistant Chat", "Evals & Configs"]
+    )
+    with tenant_tab:
+        render_tenant_tab()
     with kb_tab:
-        render_knowledge_base_tab(config)
+        if not tenant_authed:
+            st.info("🔒 Select or create a tenant in the **Tenant** tab to unlock this section.")
+        else:
+            render_knowledge_base_tab(config)
     with chat_tab:
-        if not kb_indexed:
+        if not tenant_authed:
+            st.info("🔒 Select or create a tenant in the **Tenant** tab to unlock chat.")
+        elif not kb_indexed:
             st.info("🔒 Upload and index a PDF in the **Knowledge Base** tab to unlock chat.")
         else:
             render_chat_tab(config)
@@ -669,7 +957,9 @@ def main() -> None:
             disabled=not kb_indexed,
         )
     with evals_tab:
-        if not kb_indexed:
+        if not tenant_authed:
+            st.info("🔒 Select or create a tenant in the **Tenant** tab to unlock evaluations.")
+        elif not kb_indexed:
             st.info("🔒 Upload and index a PDF in the **Knowledge Base** tab to unlock evaluations.")
         else:
             render_evals_and_configs_tab(config)
