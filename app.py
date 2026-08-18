@@ -27,7 +27,7 @@ from src.supabase_client import (
     save_eval_log,
     SupabaseError,
 )
-from src.storage import get_latest_pdf_name, upload_pdf, upload_eval_csv
+from src.storage import get_latest_eval_csv, get_latest_pdf_name, upload_pdf, upload_eval_csv
 
 _JUDGE_MODEL = "gpt-4o-mini"
 _JUDGE_SYSTEM_PROMPT = (
@@ -64,6 +64,7 @@ def initialize_state() -> None:
     st.session_state.setdefault("eval_rows", None)
     st.session_state.setdefault("eval_file_name", None)
     st.session_state.setdefault("eval_results", None)
+    st.session_state.setdefault("eval_rehydrated", False)
     st.session_state.setdefault("last_retrieval_debug", None)
     st.session_state.setdefault("pending_question", None)
     # Phase 5: per-message feedback state {message_index: True/False (submitted)}
@@ -405,6 +406,7 @@ def _rehydrate_tenant_runtime_state(config) -> None:
         state["eval_rows"] = None
         state["eval_file_name"] = None
         state["eval_results"] = None
+        state["eval_rehydrated"] = False
         state["last_retrieval_debug"] = None
     else:
         state.chunks = []
@@ -414,6 +416,7 @@ def _rehydrate_tenant_runtime_state(config) -> None:
         state.eval_rows = None
         state.eval_file_name = None
         state.eval_results = None
+        state.eval_rehydrated = False
         state.last_retrieval_debug = None
 
     persisted_file_name = get_latest_pdf_name(tenant_id)
@@ -422,6 +425,23 @@ def _rehydrate_tenant_runtime_state(config) -> None:
             state["uploaded_file_name"] = persisted_file_name
         else:
             state.uploaded_file_name = persisted_file_name
+
+    # Rehydrate eval CSV rows from persisted storage
+    persisted_eval = get_latest_eval_csv(tenant_id)
+    if persisted_eval:
+        eval_csv_name, eval_csv_bytes = persisted_eval
+        try:
+            eval_rows = parse_eval_csv(eval_csv_bytes)
+            if isinstance(state, dict):
+                state["eval_rows"] = eval_rows
+                state["eval_file_name"] = eval_csv_name
+                state["eval_rehydrated"] = True
+            else:
+                state.eval_rows = eval_rows
+                state.eval_file_name = eval_csv_name
+                state.eval_rehydrated = True
+        except Exception:  # noqa: BLE001
+            pass  # Silently ignore malformed persisted CSV
 
     namespace = build_tenant_namespace(tenant_id=tenant_id)
     if not namespace:
@@ -713,14 +733,17 @@ def render_evals_and_configs_tab(config) -> None:
     st.subheader("Evals")
     eval_file = st.file_uploader("Upload ground truth CSV", type=["csv"], key="eval_csv_uploader")
     if eval_file is None:
-        st.session_state.eval_rows = None
-        st.session_state.eval_file_name = None
+        # Preserve rows that were rehydrated from storage; only clear if the
+        # user had previously uploaded a file via the widget and removed it.
+        if not st.session_state.get("eval_rehydrated"):
+            st.session_state.eval_rows = None
+            st.session_state.eval_file_name = None
     else:
+        st.session_state.eval_rehydrated = False  # User has supplied a new file
         try:
             rows = parse_eval_csv(eval_file.getvalue())
             st.session_state.eval_rows = rows
             st.session_state.eval_file_name = eval_file.name
-            st.success(f"Loaded {len(rows)} eval rows.")
             # Phase 2: persist CSV to Supabase Storage when tenant is authenticated
             if st.session_state.get("tenant_authenticated") and st.session_state.get("tenant_id"):
                 try:
@@ -747,6 +770,12 @@ def render_evals_and_configs_tab(config) -> None:
     eval_rows = st.session_state.eval_rows
     index_ready = st.session_state.index_built and st.session_state.vector_namespace
     can_run = bool(eval_rows) and bool(index_ready)
+
+    if eval_rows and st.session_state.get("eval_rehydrated"):
+        eval_name = st.session_state.get("eval_file_name") or "ground truth CSV"
+        st.info(f"📋 **{eval_name}** — persisted ground truth data detected ({len(eval_rows)} rows)")
+    elif eval_rows and st.session_state.get("eval_file_name"):
+        st.success(f"Loaded {len(eval_rows)} eval rows.")
 
     if st.button("Run Evaluation", disabled=not can_run):
         config = load_config()

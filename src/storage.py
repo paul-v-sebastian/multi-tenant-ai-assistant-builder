@@ -142,6 +142,71 @@ def get_latest_pdf_name(tenant_id: str) -> str | None:
     return name or None
 
 
+def get_latest_eval_csv(tenant_id: str) -> tuple[str, bytes] | None:
+    """Return the most recent eval CSV stored for *tenant_id* as ``(filename, raw_bytes)``.
+
+    Returns ``None`` when the client is not connected, no CSV objects exist,
+    or the storage operation fails.
+    """
+    from src.supabase_client import get_client  # noqa: PLC0415
+
+    client = get_client()
+    if client is None:
+        return None
+
+    try:
+        bucket = client.storage.from_(_EVAL_BUCKET)
+        try:
+            objects = bucket.list(path=tenant_id)
+        except TypeError:
+            objects = bucket.list(tenant_id)
+    except Exception:  # noqa: BLE001
+        return None
+
+    if not isinstance(objects, list):
+        objects = getattr(objects, "data", []) or []
+
+    csv_objects = []
+    for item in objects:
+        if not isinstance(item, dict):
+            continue
+        name = str(item.get("name", "")).strip()
+        if not name.lower().endswith(".csv"):
+            continue
+        csv_objects.append(item)
+
+    if not csv_objects:
+        return None
+
+    def _sort_key(item: dict) -> tuple[str, str]:
+        timestamp = (
+            item.get("updated_at")
+            or item.get("updatedAt")
+            or item.get("created_at")
+            or item.get("createdAt")
+            or ""
+        )
+        return str(timestamp), str(item.get("name", ""))
+
+    latest = max(csv_objects, key=_sort_key)
+    filename = str(latest.get("name", "")).strip()
+    if not filename:
+        return None
+
+    try:
+        path = _object_path(tenant_id, filename)
+        raw = client.storage.from_(_EVAL_BUCKET).download(path)
+        if isinstance(raw, (bytes, bytearray)):
+            return filename, bytes(raw)
+        # Some SDK versions return the content via .data
+        data = getattr(raw, "data", raw)
+        if isinstance(data, (bytes, bytearray)):
+            return filename, bytes(data)
+        return None
+    except Exception:  # noqa: BLE001
+        return None
+
+
 def get_pdf_url(tenant_id: str, filename: str) -> str | None:
     """Return a fresh signed URL for an already-uploaded PDF.
 

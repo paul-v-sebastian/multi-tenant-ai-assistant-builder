@@ -181,3 +181,94 @@ def test_object_path_format():
     from src.storage import _object_path
 
     assert _object_path("tenant-abc", "report.pdf") == "tenant-abc/report.pdf"
+
+
+# ---------------------------------------------------------------------------
+# get_latest_eval_csv
+# ---------------------------------------------------------------------------
+
+def test_get_latest_eval_csv_returns_most_recent_csv_with_bytes():
+    from src import storage
+
+    csv_bytes = b"Query,Expected Response\nhello,world\n"
+    storage_mock = MagicMock()
+    bucket = MagicMock()
+    bucket.list.return_value = [
+        {"name": "old.csv", "updated_at": "2024-01-01T00:00:00Z"},
+        {"name": "latest.csv", "updated_at": "2024-02-01T00:00:00Z"},
+        {"name": "readme.txt", "updated_at": "2024-03-01T00:00:00Z"},
+    ]
+    bucket.download.return_value = csv_bytes
+    storage_mock.from_.return_value = bucket
+    mock_client = MagicMock()
+    mock_client.storage = storage_mock
+
+    with patch("src.supabase_client.get_client", return_value=mock_client):
+        result = storage.get_latest_eval_csv("tenant-1")
+
+    assert result is not None
+    name, data = result
+    assert name == "latest.csv"
+    assert data == csv_bytes
+
+
+def test_get_latest_eval_csv_returns_none_when_not_connected():
+    from src import storage
+
+    with patch("src.supabase_client.get_client", return_value=None):
+        result = storage.get_latest_eval_csv("tenant-1")
+
+    assert result is None
+
+
+def test_get_latest_eval_csv_returns_none_when_no_csv_objects():
+    from src import storage
+
+    storage_mock = MagicMock()
+    bucket = MagicMock()
+    bucket.list.return_value = [
+        {"name": "notes.txt", "updated_at": "2024-01-01T00:00:00Z"},
+    ]
+    storage_mock.from_.return_value = bucket
+    mock_client = MagicMock()
+    mock_client.storage = storage_mock
+
+    with patch("src.supabase_client.get_client", return_value=mock_client):
+        result = storage.get_latest_eval_csv("tenant-1")
+
+    assert result is None
+
+
+def test_get_latest_eval_csv_returns_none_when_list_fails():
+    from src import storage
+
+    storage_mock = MagicMock()
+    bucket = MagicMock()
+    bucket.list.side_effect = RuntimeError("storage down")
+    storage_mock.from_.return_value = bucket
+    mock_client = MagicMock()
+    mock_client.storage = storage_mock
+
+    with patch("src.supabase_client.get_client", return_value=mock_client):
+        result = storage.get_latest_eval_csv("tenant-1")
+
+    assert result is None
+
+
+def test_get_latest_eval_csv_returns_none_when_download_fails():
+    from src import storage
+
+    storage_mock = MagicMock()
+    bucket = MagicMock()
+    bucket.list.return_value = [
+        {"name": "gt.csv", "updated_at": "2024-01-01T00:00:00Z"},
+    ]
+    bucket.download.side_effect = RuntimeError("download error")
+    storage_mock.from_.return_value = bucket
+    mock_client = MagicMock()
+    mock_client.storage = storage_mock
+
+    with patch("src.supabase_client.get_client", return_value=mock_client):
+        result = storage.get_latest_eval_csv("tenant-1")
+
+    assert result is None
