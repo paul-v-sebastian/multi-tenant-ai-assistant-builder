@@ -27,7 +27,7 @@ from src.supabase_client import (
     save_eval_log,
     SupabaseError,
 )
-from src.storage import upload_pdf, upload_eval_csv
+from src.storage import get_latest_pdf_name, upload_pdf, upload_eval_csv
 
 _JUDGE_MODEL = "gpt-4o-mini"
 _JUDGE_SYSTEM_PROMPT = (
@@ -390,6 +390,62 @@ def _load_tenant_into_session(row: dict) -> None:
             state.cfg_min_confidence = float(cfg["min_confidence"])
 
 
+def _rehydrate_tenant_runtime_state(config) -> None:
+    """Restore tenant-scoped KB state from persisted storage and vector state."""
+    state = st.session_state
+    tenant_id = state.get("tenant_id") if isinstance(state, dict) else getattr(state, "tenant_id", None)
+    if not tenant_id:
+        return
+
+    if isinstance(state, dict):
+        state["chunks"] = []
+        state["uploaded_file_name"] = None
+        state["index_built"] = False
+        state["vector_namespace"] = None
+        state["eval_rows"] = None
+        state["eval_file_name"] = None
+        state["eval_results"] = None
+        state["last_retrieval_debug"] = None
+    else:
+        state.chunks = []
+        state.uploaded_file_name = None
+        state.index_built = False
+        state.vector_namespace = None
+        state.eval_rows = None
+        state.eval_file_name = None
+        state.eval_results = None
+        state.last_retrieval_debug = None
+
+    persisted_file_name = get_latest_pdf_name(tenant_id)
+    if persisted_file_name:
+        if isinstance(state, dict):
+            state["uploaded_file_name"] = persisted_file_name
+        else:
+            state.uploaded_file_name = persisted_file_name
+
+    namespace = build_tenant_namespace(tenant_id=tenant_id)
+    if not namespace:
+        return
+
+    tenant_status = state.get("tenant_status") if isinstance(state, dict) else getattr(state, "tenant_status", None)
+    if not persisted_file_name and tenant_status not in {"INGESTED", "EVALUATED", "PUBLISHED"}:
+        return
+
+    index_name = state.get("cfg_index_name") if isinstance(state, dict) else getattr(state, "cfg_index_name", None)
+    try:
+        namespace_stats = build_vector_store(config, index_name=index_name).describe_namespace(namespace)
+    except VectorStoreError:
+        return
+
+    if namespace_stats["namespace_vector_count"] > 0:
+        if isinstance(state, dict):
+            state["index_built"] = True
+            state["vector_namespace"] = namespace
+        else:
+            state.index_built = True
+            state.vector_namespace = namespace
+
+
 def render_tenant_tab() -> None:
     """Tenant selection / creation screen (Phase 3)."""
     st.subheader("Tenant Management")
@@ -447,6 +503,7 @@ def render_tenant_tab() -> None:
                     row = get_tenant(tenant_id)
                     if row:
                         _load_tenant_into_session(row)
+                        _rehydrate_tenant_runtime_state(load_config())
                         st.success(f"Tenant created! Your tenant ID: `{tenant_id}`")
                         st.info("📋 Save this ID — you will need it to sign in next time.")
                         st.rerun()
@@ -474,6 +531,7 @@ def render_tenant_tab() -> None:
                         ok = verify_tenant_passkey(row["id"], existing_passkey)
                         if ok:
                             _load_tenant_into_session(row)
+                            _rehydrate_tenant_runtime_state(load_config())
                             st.success(f"Welcome back, **{row.get('name', '')}**!")
                             st.rerun()
                         else:
@@ -581,11 +639,23 @@ def render_knowledge_base_tab(config) -> None:
         except (EmbeddingServiceError, VectorStoreError, Exception) as exc:  # noqa: BLE001
             st.error(f"Index build error: {exc}")
 
-    if st.session_state.chunks:
-        st.info(f"📄 **{st.session_state.uploaded_file_name}** — {len(st.session_state.chunks)} chunks extracted")
+    has_kb_state = bool(
+        st.session_state.uploaded_file_name
+        or st.session_state.index_built
+        or st.session_state.vector_namespace
+    )
+    if has_kb_state:
+        if st.session_state.chunks:
+            st.info(f"📄 **{st.session_state.uploaded_file_name}** — {len(st.session_state.chunks)} chunks extracted")
+        elif st.session_state.uploaded_file_name:
+            st.info(f"📄 **{st.session_state.uploaded_file_name}** — persisted tenant document detected")
+        else:
+            st.info("📄 Persisted tenant knowledge base detected")
         with st.expander("🔍 Index debug info", expanded=False):
             st.write(f"Index built: {st.session_state.index_built}")
             st.write(f"Namespace: {st.session_state.vector_namespace}")
+            if st.session_state.chunks:
+                st.write(f"Chunks extracted: {len(st.session_state.chunks)}")
             if st.session_state.index_built and st.session_state.vector_namespace:
                 try:
                     namespace_stats = build_vector_store(config, index_name=st.session_state.cfg_index_name).describe_namespace(st.session_state.vector_namespace)
