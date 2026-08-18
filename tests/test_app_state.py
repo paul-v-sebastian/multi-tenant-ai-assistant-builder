@@ -118,6 +118,82 @@ def test_get_active_vector_namespace_falls_back_to_uploaded_file(monkeypatch):
     assert app.get_active_vector_namespace() == "sample.pdf"
 
 
+def test_rehydrate_tenant_runtime_state_restores_persisted_kb(monkeypatch):
+    fake_state = {
+        "tenant_id": "tenant-123",
+        "cfg_index_name": "custom-index",
+        "chunks": ["stale"],
+        "uploaded_file_name": "old.pdf",
+        "index_built": False,
+        "vector_namespace": None,
+        "eval_rows": [{"Query": "q", "Expected Response": "e"}],
+        "eval_file_name": "eval.csv",
+        "eval_results": [{"Score (1-5)": 5}],
+        "last_retrieval_debug": {"Retrieved": "1"},
+    }
+    monkeypatch.setattr(app.st, "session_state", fake_state, raising=False)
+    monkeypatch.setattr(app, "get_latest_pdf_name", lambda tenant_id: "persisted.pdf")
+
+    class FakeVectorStore:
+        def describe_namespace(self, namespace):
+            assert namespace == "tenant-123"
+            return {"namespace_vector_count": 4, "dimension": 1536}
+
+    captured = {}
+
+    def fake_build_vector_store(config, index_name=None):
+        captured["index_name"] = index_name
+        return FakeVectorStore()
+
+    monkeypatch.setattr(app, "build_vector_store", fake_build_vector_store)
+
+    app._rehydrate_tenant_runtime_state(config=object())
+
+    assert captured["index_name"] == "custom-index"
+    assert fake_state["chunks"] == []
+    assert fake_state["uploaded_file_name"] == "persisted.pdf"
+    assert fake_state["index_built"] is True
+    assert fake_state["vector_namespace"] == "tenant-123"
+    assert fake_state["eval_rows"] is None
+    assert fake_state["eval_file_name"] is None
+    assert fake_state["eval_results"] is None
+    assert fake_state["last_retrieval_debug"] is None
+
+
+def test_rehydrate_tenant_runtime_state_leaves_empty_kb_when_no_persisted_data(monkeypatch):
+    fake_state = {
+        "tenant_id": "tenant-123",
+        "cfg_index_name": "custom-index",
+        "chunks": ["stale"],
+        "uploaded_file_name": "old.pdf",
+        "index_built": True,
+        "vector_namespace": "old-ns",
+        "eval_rows": [{"Query": "q", "Expected Response": "e"}],
+        "eval_file_name": "eval.csv",
+        "eval_results": [{"Score (1-5)": 5}],
+        "last_retrieval_debug": {"Retrieved": "1"},
+    }
+    monkeypatch.setattr(app.st, "session_state", fake_state, raising=False)
+    monkeypatch.setattr(app, "get_latest_pdf_name", lambda tenant_id: None)
+
+    class FakeVectorStore:
+        def describe_namespace(self, namespace):
+            return {"namespace_vector_count": 0, "dimension": 1536}
+
+    monkeypatch.setattr(app, "build_vector_store", lambda config, index_name=None: FakeVectorStore())
+
+    app._rehydrate_tenant_runtime_state(config=object())
+
+    assert fake_state["chunks"] == []
+    assert fake_state["uploaded_file_name"] is None
+    assert fake_state["index_built"] is False
+    assert fake_state["vector_namespace"] is None
+    assert fake_state["eval_rows"] is None
+    assert fake_state["eval_file_name"] is None
+    assert fake_state["eval_results"] is None
+    assert fake_state["last_retrieval_debug"] is None
+
+
 # ---------------------------------------------------------------------------
 # Bug 2: session state is fully cleared on logout
 # ---------------------------------------------------------------------------

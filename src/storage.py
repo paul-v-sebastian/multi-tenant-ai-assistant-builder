@@ -91,6 +91,57 @@ def upload_eval_csv(tenant_id: str, filename: str, data: bytes) -> str | None:
     return result.get("signedURL") or result.get("signedUrl")
 
 
+def get_latest_pdf_name(tenant_id: str) -> str | None:
+    """Return the most recent PDF object name stored for *tenant_id*.
+
+    Returns ``None`` when the client is not connected, no PDF objects exist,
+    or the storage listing fails.
+    """
+    from src.supabase_client import get_client  # noqa: PLC0415
+
+    client = get_client()
+    if client is None:
+        return None
+
+    try:
+        bucket = client.storage.from_(_PDF_BUCKET)
+        try:
+            objects = bucket.list(path=tenant_id)
+        except TypeError:
+            objects = bucket.list(tenant_id)
+    except Exception:  # noqa: BLE001
+        return None
+
+    if not isinstance(objects, list):
+        objects = getattr(objects, "data", []) or []
+
+    pdf_objects = []
+    for item in objects:
+        if not isinstance(item, dict):
+            continue
+        name = str(item.get("name", "")).strip()
+        if not name.lower().endswith(".pdf"):
+            continue
+        pdf_objects.append(item)
+
+    if not pdf_objects:
+        return None
+
+    def _sort_key(item: dict) -> tuple[str, str]:
+        timestamp = (
+            item.get("updated_at")
+            or item.get("updatedAt")
+            or item.get("created_at")
+            or item.get("createdAt")
+            or ""
+        )
+        return str(timestamp), str(item.get("name", ""))
+
+    latest = max(pdf_objects, key=_sort_key)
+    name = str(latest.get("name", "")).strip()
+    return name or None
+
+
 def get_pdf_url(tenant_id: str, filename: str) -> str | None:
     """Return a fresh signed URL for an already-uploaded PDF.
 

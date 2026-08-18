@@ -127,6 +127,52 @@ def test_get_pdf_url_returns_none_on_storage_error():
     assert url is None
 
 
+def test_get_latest_pdf_name_returns_most_recent_pdf():
+    from src import storage
+
+    storage_mock = MagicMock()
+    bucket = MagicMock()
+    bucket.list.return_value = [
+        {"name": "older.pdf", "updated_at": "2024-01-01T00:00:00Z"},
+        {"name": "latest.pdf", "updated_at": "2024-02-01T00:00:00Z"},
+        {"name": "notes.txt", "updated_at": "2024-03-01T00:00:00Z"},
+    ]
+    storage_mock.from_.return_value = bucket
+    mock_client = MagicMock()
+    mock_client.storage = storage_mock
+
+    with patch("src.supabase_client.get_client", return_value=mock_client):
+        name = storage.get_latest_pdf_name("tenant-1")
+
+    assert name == "latest.pdf"
+    bucket.list.assert_called_once_with(path="tenant-1")
+
+
+def test_get_latest_pdf_name_returns_none_when_not_connected():
+    from src import storage
+
+    with patch("src.supabase_client.get_client", return_value=None):
+        name = storage.get_latest_pdf_name("tenant-1")
+
+    assert name is None
+
+
+def test_get_latest_pdf_name_returns_none_when_storage_list_fails():
+    from src import storage
+
+    storage_mock = MagicMock()
+    bucket = MagicMock()
+    bucket.list.side_effect = RuntimeError("storage down")
+    storage_mock.from_.return_value = bucket
+    mock_client = MagicMock()
+    mock_client.storage = storage_mock
+
+    with patch("src.supabase_client.get_client", return_value=mock_client):
+        name = storage.get_latest_pdf_name("tenant-1")
+
+    assert name is None
+
+
 # ---------------------------------------------------------------------------
 # Object path helper
 # ---------------------------------------------------------------------------
