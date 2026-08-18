@@ -33,6 +33,8 @@ class AppConfig:
     langfuse_host: str = "https://cloud.langfuse.com"
     supabase_url: str = ""
     supabase_key: str = ""
+    jwt_secret: str = ""
+    app_base_url: str = ""
 
     def with_overrides(self, **kwargs) -> "AppConfig":
         return replace(self, **kwargs)
@@ -61,4 +63,6 @@ def load_config() -> AppConfig:
         langfuse_host=read_secret("LANGFUSE_HOST", "https://cloud.langfuse.com"),
         supabase_url=read_secret("SUPABASE_URL"),
         supabase_key=read_secret("SUPABASE_KEY"),
+        jwt_secret=read_secret("JWT_SECRET"),
+        app_base_url=read_secret("APP_BASE_URL"),
     )
