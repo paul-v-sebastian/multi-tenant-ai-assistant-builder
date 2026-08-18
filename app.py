@@ -593,73 +593,38 @@ def render_chat_tab(config) -> None:
 
 
 def _render_supabase_indicator() -> None:
-    """Inject a fixed top-right colour dot indicating Supabase connection status.
+    """Inject a colour dot indicating Supabase connection status into the sidebar.
 
-    st.markdown injects HTML inside a Streamlit iframe, so ``position:fixed``
-    is anchored to that iframe rather than the browser viewport, making the
-    element invisible.  Instead we use st.components.v1.html with a small JS
-    snippet that appends the element directly to window.parent.document.body,
-    ensuring it is truly fixed to the main page.
+    Previous approaches attempted to use ``position:fixed`` via st.markdown
+    (broken because Streamlit's block container establishes a new stacking
+    context that traps fixed elements) and then via st.components.v1.html with
+    ``window.parent.document`` DOM manipulation (broken in deployed environments
+    because component iframes are cross-origin, so accessing window.parent.document
+    raises a SecurityError that silently swallows the operation).
+
+    The reliable solution is to render the indicator inside st.sidebar using
+    st.sidebar.markdown.  Sidebar HTML is emitted into the main Streamlit
+    document (not inside a component iframe), so it is fully visible and
+    correctly styled.
     """
-    import streamlit.components.v1 as components  # noqa: PLC0415 — lazy import
-
     status, message = get_supabase_status()
     colour_map = {"grey": "#9e9e9e", "red": "#e53935", "green": "#43a047"}
     label_map = {"grey": "DB: not configured", "red": "DB: error", "green": "DB: connected"}
     colour = colour_map[status]
     label = label_map[status]
-    # Escape message for safe embedding in JS string
-    safe_message = message.replace("\\", "\\\\").replace("'", "\\'").replace("\n", " ")
-    js = f"""
-<script>
-(function() {{
-    var doc = window.parent.document;
-    // Remove any previous instance so re-runs stay fresh
-    var old = doc.getElementById('supabase-indicator');
-    if (old) old.remove();
-
-    var style = doc.getElementById('supabase-indicator-style');
-    if (!style) {{
-        style = doc.createElement('style');
-        style.id = 'supabase-indicator-style';
-        style.textContent = `
-            #supabase-indicator {{
-                position: fixed;
-                top: 0.6rem;
-                right: 1.2rem;
-                z-index: 9999;
-                display: flex;
-                align-items: center;
-                gap: 0.4rem;
-                background: rgba(255,255,255,0.85);
-                border-radius: 999px;
-                padding: 0.15rem 0.65rem 0.15rem 0.4rem;
-                font-size: 0.75rem;
-                font-weight: 500;
-                color: #333;
-                box-shadow: 0 1px 4px rgba(0,0,0,0.15);
-                backdrop-filter: blur(4px);
-                pointer-events: none;
-            }}
-            #supabase-indicator .dot {{
-                width: 10px;
-                height: 10px;
-                border-radius: 50%;
-                flex-shrink: 0;
-            }}
-        `;
-        doc.head.appendChild(style);
-    }}
-
-    var el = doc.createElement('div');
-    el.id = 'supabase-indicator';
-    el.title = '{safe_message}';
-    el.innerHTML = '<span class="dot" style="background:{colour};"></span>{label}';
-    doc.body.appendChild(el);
-}})();
-</script>
-"""
-    components.html(js, height=0, scrolling=False)
+    html = (
+        f'<div title="{message}" style="'
+        "display:flex;align-items:center;gap:0.4rem;"
+        "background:rgba(0,0,0,0.04);border-radius:999px;"
+        "padding:0.15rem 0.65rem 0.15rem 0.4rem;"
+        "font-size:0.75rem;font-weight:500;color:#333;"
+        'margin-bottom:0.5rem;">'
+        f'<span style="width:10px;height:10px;border-radius:50%;'
+        f'background:{colour};flex-shrink:0;display:inline-block;"></span>'
+        f"{label}"
+        "</div>"
+    )
+    st.sidebar.markdown(html, unsafe_allow_html=True)
 
 
 def main() -> None:
