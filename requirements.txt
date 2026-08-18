@@ -7,3 +7,4 @@ PyMuPDF>=1.24.0
 tiktoken>=0.7.0
 pytest>=8.3.0
 langfuse>=4.0.0
+supabase>=2.0.0

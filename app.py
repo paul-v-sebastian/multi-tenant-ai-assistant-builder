@@ -15,6 +15,7 @@ from src.tenants import build_tenant_namespace
 from src.retrieval import format_citation
 from src.tracing import get_langfuse, init_langfuse
 from src.vector_store import PineconeVectorStore, VectorStoreError
+from src.supabase_client import get_supabase_status, init_supabase
 
 _JUDGE_MODEL = "gpt-4o-mini"
 _JUDGE_SYSTEM_PROMPT = (
@@ -27,6 +28,31 @@ _JUDGE_SYSTEM_PROMPT = (
 _GLOBAL_CSS = """
 <style>
 .block-container { max-width: 900px; padding-top: 2rem; }
+/* Supabase connection indicator — pinned top-right */
+#supabase-indicator {
+    position: fixed;
+    top: 0.6rem;
+    right: 1.2rem;
+    z-index: 9999;
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    background: rgba(255,255,255,0.85);
+    border-radius: 999px;
+    padding: 0.15rem 0.65rem 0.15rem 0.4rem;
+    font-size: 0.75rem;
+    font-weight: 500;
+    color: #333;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.15);
+    backdrop-filter: blur(4px);
+    pointer-events: none;
+}
+#supabase-indicator .dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    flex-shrink: 0;
+}
 </style>
 """
 
@@ -591,6 +617,22 @@ def render_chat_tab(config) -> None:
             # --- End Phase 5 feedback ---
 
 
+def _render_supabase_indicator() -> None:
+    """Inject a fixed top-right colour dot indicating Supabase connection status."""
+    status, message = get_supabase_status()
+    colour_map = {"grey": "#9e9e9e", "red": "#e53935", "green": "#43a047"}
+    label_map = {"grey": "DB: not configured", "red": "DB: error", "green": "DB: connected"}
+    colour = colour_map[status]
+    label = label_map[status]
+    html = (
+        f'<div id="supabase-indicator" title="{message}">'
+        f'<span class="dot" style="background:{colour};"></span>'
+        f"{label}"
+        f"</div>"
+    )
+    st.markdown(html, unsafe_allow_html=True)
+
+
 def main() -> None:
     st.set_page_config(page_title="AI Assistant Builder", page_icon="🤖", layout="centered")
     st.markdown(_GLOBAL_CSS, unsafe_allow_html=True)
@@ -598,6 +640,10 @@ def main() -> None:
 
     config = load_config()
     initialize_state()
+
+    # Phase 1.5: probe Supabase connection and render the status indicator
+    init_supabase(url=config.supabase_url, key=config.supabase_key)
+    _render_supabase_indicator()
 
     # Phase 4: initialise Langfuse once per session (no-op if keys absent)
     init_langfuse(
