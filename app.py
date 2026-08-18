@@ -20,6 +20,7 @@ from src.supabase_client import (
     init_supabase,
     create_tenant,
     get_tenant,
+    get_tenant_by_name,
     verify_tenant_passkey,
     update_tenant_status,
     upsert_tenant_config,
@@ -399,11 +400,7 @@ def render_tenant_tab() -> None:
             f"(ID: `{st.session_state.tenant_id}`)"
         )
         if st.button("Sign out", key="tenant_signout"):
-            st.session_state.tenant_id = None
-            st.session_state.tenant_name = None
-            st.session_state.tenant_status = None
-            st.session_state.tenant_authenticated = False
-            st.session_state.tenant_share_url = None
+            st.session_state.clear()
             st.rerun()
         return
 
@@ -458,29 +455,31 @@ def render_tenant_tab() -> None:
 
     else:  # Select existing tenant
         st.markdown("#### Sign in to an existing tenant")
-        existing_id = st.text_input("Tenant ID (UUID)", key="existing_tenant_id")
+        existing_name = st.text_input("Tenant name", key="existing_tenant_name")
         existing_passkey = st.text_input(
             "Passkey", type="password", key="existing_tenant_passkey"
         )
 
         if st.button("Sign in", key="btn_signin_tenant"):
-            if not existing_id.strip():
-                st.error("Tenant ID cannot be empty.")
+            if not existing_name.strip():
+                st.error("Tenant name cannot be empty.")
             elif not existing_passkey:
                 st.error("Passkey cannot be empty.")
             else:
                 try:
-                    ok = verify_tenant_passkey(existing_id.strip(), existing_passkey)
-                    if ok:
-                        row = get_tenant(existing_id.strip())
-                        if row:
+                    row = get_tenant_by_name(existing_name.strip())
+                    if row is None:
+                        st.error("Tenant not found. Please check the name and try again.")
+                    else:
+                        ok = verify_tenant_passkey(row["id"], existing_passkey)
+                        if ok:
                             _load_tenant_into_session(row)
                             st.success(f"Welcome back, **{row.get('name', '')}**!")
                             st.rerun()
-                    else:
-                        st.error("Incorrect passkey. Please try again.")
+                        else:
+                            st.error("Incorrect passkey. Please try again.")
                 except SupabaseError as exc:
-                    st.error(f"Authentication error: {exc}")
+                    st.error(f"Authentication error. Please try again.")
 
 
 def render_knowledge_base_tab(config) -> None:
@@ -907,6 +906,59 @@ def _render_tenant_sidebar_badge() -> None:
 def main() -> None:
     st.set_page_config(page_title="AI Assistant Builder", page_icon="🤖", layout="centered")
     st.markdown(_GLOBAL_CSS, unsafe_allow_html=True)
+
+    # --- Token routing: check for a shared assistant URL BEFORE any other UI ---
+    token = st.query_params.get("token")
+    if token:
+        from src.share import verify_share_token, ShareTokenError  # noqa: PLC0415
+        config = load_config()
+        jwt_secret = getattr(config, "jwt_secret", "") or ""
+        if not jwt_secret:
+            st.error("This link cannot be verified: JWT_SECRET is not configured.")
+            return
+        try:
+            tenant_id = verify_share_token(token, jwt_secret)
+        except ShareTokenError:
+            st.error("This link is invalid or has expired.")
+            return
+        # Confirm tenant is PUBLISHED before rendering the standalone chat view
+        try:
+            init_supabase(url=config.supabase_url, key=config.supabase_key)
+            row = get_tenant(tenant_id)
+        except SupabaseError:
+            row = None
+        if row is None or row.get("status") != "PUBLISHED":
+            st.error("This assistant is not available.")
+            return
+        # --- Standalone chat view — no tab bar, no login, no other UI ---
+        st.title(f"💬 {row.get('name', 'Assistant')} Chat")
+        initialize_state()
+        if not st.session_state.get("tenant_id"):
+            _load_tenant_into_session(row)
+        init_langfuse(
+            secret_key=config.langfuse_secret_key,
+            public_key=config.langfuse_public_key,
+            host=config.langfuse_host,
+        )
+        kb_indexed = st.session_state.index_built and bool(st.session_state.vector_namespace)
+        pending_question = st.session_state.pop("pending_question", None)
+        if pending_question:
+            process_chat_question(config, pending_question)
+        for index, message in enumerate(st.session_state.messages):
+            with st.chat_message(message["role"]):
+                st.markdown(message["content"])
+                if message.get("citations"):
+                    st.markdown("**Sources:**\n" + "\n".join(message["citations"]))
+                if message["role"] == "assistant":
+                    _render_feedback_buttons(index, message.get("trace_id"))
+        st.chat_input(
+            "Ask anything...",
+            key="chat_input_value",
+            on_submit=queue_chat_question,
+        )
+        return
+    # --- End token routing ---
+
     st.title("AI Assistant Builder")
 
     config = load_config()

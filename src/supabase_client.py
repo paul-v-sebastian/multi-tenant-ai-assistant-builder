@@ -160,6 +160,35 @@ def get_tenant(tenant_id: str) -> dict[str, Any] | None:
     return rows[0] if rows else None
 
 
+def get_tenant_by_name(name: str) -> dict[str, Any] | None:
+    """Fetch a single tenant row by human-readable name.
+
+    Returns the row as a dict, or ``None`` if not found.
+
+    Raises
+    ------
+    SupabaseError
+        If the client is not connected or the query fails.
+    """
+    client = get_client()
+    if client is None:
+        raise SupabaseError("Supabase client is not connected.")
+
+    try:
+        result = (
+            client.table("tenants")
+            .select("*")
+            .eq("name", name)
+            .limit(1)
+            .execute()
+        )
+    except Exception as exc:  # noqa: BLE001
+        raise SupabaseError(f"Failed to fetch tenant: {exc}") from exc
+
+    rows = result.data or []
+    return rows[0] if rows else None
+
+
 def verify_tenant_passkey(tenant_id: str, passkey: str) -> bool:
     """Return ``True`` if *passkey* matches the bcrypt hash stored for *tenant_id*.
 
