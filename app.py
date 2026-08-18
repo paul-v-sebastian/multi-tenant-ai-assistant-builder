@@ -342,7 +342,123 @@ def _submit_feedback(message_index: int, trace_id: str | None, score: int) -> No
             pass  # Feedback failure must never break the chat UI
 
 
-def render_evals_tab() -> None:
+def render_knowledge_base_tab(config) -> None:
+    st.subheader("Knowledge Base")
+
+    uploaded_file = st.file_uploader("Upload a PDF", type=["pdf"], key="kb_pdf_uploader")
+    if uploaded_file is not None:
+        if uploaded_file.name != st.session_state.uploaded_file_name:
+            try:
+                pdf_bytes = uploaded_file.read()
+                pages = extract_pdf_pages(pdf_bytes)
+                chunks = build_chunks(
+                    pages,
+                    source=uploaded_file.name,
+                    chunk_size=config.chunk_size_words,
+                    overlap=config.chunk_overlap_words,
+                )
+                st.session_state.chunks = chunks
+                st.session_state.uploaded_file_name = uploaded_file.name
+                st.session_state.index_built = False
+                st.session_state.vector_namespace = None
+            except PDFProcessingError as exc:
+                st.error(f"PDF processing error: {exc}")
+
+    if st.session_state.chunks and not st.session_state.index_built:
+        try:
+            with st.spinner("Building vector index…"):
+                embedding_svc = EmbeddingService(
+                    api_key=config.openai_api_key,
+                    model=config.embedding_model,
+                )
+                texts = [chunk.text for chunk in st.session_state.chunks]
+                embeddings = embedding_svc.embed_texts(texts)
+                namespace = get_active_vector_namespace() or "default"
+                vector_store = build_vector_store(config, index_name=st.session_state.cfg_index_name)
+
+                lf = get_langfuse()
+                if lf:
+                    with lf.start_as_current_observation(
+                        name="pdf_upload_and_index",
+                        as_type="span",
+                        input={"filename": uploaded_file.name if uploaded_file else namespace},
+                    ):
+                        vector_store.upsert_chunks(st.session_state.chunks, embeddings, namespace=namespace)
+                        st.session_state.index_built = True
+                        st.session_state.vector_namespace = namespace
+                        try:
+                            ns_stats = vector_store.describe_namespace(namespace)
+                            lf.update_current_span(
+                                metadata={
+                                    "index_name": st.session_state.cfg_index_name,
+                                    "namespace": namespace,
+                                    "index_status": "ready",
+                                    "chunks_in_index": ns_stats["namespace_vector_count"],
+                                    "index_dimension": ns_stats["dimension"],
+                                }
+                            )
+                        except VectorStoreError:
+                            lf.update_current_span(
+                                metadata={
+                                    "index_name": st.session_state.cfg_index_name,
+                                    "namespace": namespace,
+                                    "index_status": "upserted",
+                                    "chunks_in_index": len(st.session_state.chunks),
+                                }
+                            )
+                else:
+                    vector_store.upsert_chunks(st.session_state.chunks, embeddings, namespace=namespace)
+                    st.session_state.index_built = True
+                    st.session_state.vector_namespace = namespace
+
+        except (EmbeddingServiceError, VectorStoreError, Exception) as exc:  # noqa: BLE001
+            st.error(f"Index build error: {exc}")
+
+    if st.session_state.chunks:
+        st.info(f"📄 **{st.session_state.uploaded_file_name}** — {len(st.session_state.chunks)} chunks extracted")
+        with st.expander("🔍 Index debug info", expanded=False):
+            st.write(f"Index built: {st.session_state.index_built}")
+            st.write(f"Namespace: {st.session_state.vector_namespace}")
+            if st.session_state.index_built and st.session_state.vector_namespace:
+                try:
+                    namespace_stats = build_vector_store(config, index_name=st.session_state.cfg_index_name).describe_namespace(st.session_state.vector_namespace)
+                    st.write("Index status: ready")
+                    st.write(f"Chunks in index: {namespace_stats['namespace_vector_count']}")
+                    st.write(f"Index dimension: {namespace_stats['dimension']}")
+                except VectorStoreError as exc:
+                    st.write(f"Index status: unavailable ({exc})")
+            else:
+                st.write("Index status: not built")
+                st.write("Chunks in index: 0")
+
+
+def render_evals_and_configs_tab(config) -> None:
+    st.subheader("Evals & Configs")
+
+    st.markdown("#### Retrieval settings")
+    st.session_state.cfg_index_name = st.text_input(
+        "Index name",
+        value=st.session_state.cfg_index_name,
+        key="evals_cfg_index_name",
+    )
+    st.session_state.cfg_top_k = st.number_input(
+        "Top K",
+        min_value=1,
+        max_value=20,
+        value=st.session_state.cfg_top_k,
+        step=1,
+        key="evals_cfg_top_k",
+    )
+    st.session_state.cfg_min_confidence = st.slider(
+        "Min confidence",
+        min_value=0.0,
+        max_value=1.0,
+        value=st.session_state.cfg_min_confidence,
+        step=0.01,
+        key="evals_cfg_min_confidence",
+    )
+
+    st.markdown("---")
     st.subheader("Evals")
     eval_file = st.file_uploader("Upload ground truth CSV", type=["csv"], key="eval_csv_uploader")
     if eval_file is None:
@@ -448,97 +564,6 @@ def render_chat_tab(config) -> None:
         clear_conversation()
         st.rerun()
 
-    # --- Phase 1: PDF upload and chunking / Phase 2: build index ---
-    uploaded_file = st.file_uploader("Upload a PDF", type=["pdf"], label_visibility="collapsed")
-    if uploaded_file is not None:
-        if uploaded_file.name != st.session_state.uploaded_file_name:
-            try:
-                pdf_bytes = uploaded_file.read()
-                pages = extract_pdf_pages(pdf_bytes)
-                chunks = build_chunks(
-                    pages,
-                    source=uploaded_file.name,
-                    chunk_size=config.chunk_size_words,
-                    overlap=config.chunk_overlap_words,
-                )
-                st.session_state.chunks = chunks
-                st.session_state.uploaded_file_name = uploaded_file.name
-                st.session_state.index_built = False
-                st.session_state.vector_namespace = None
-            except PDFProcessingError as exc:
-                st.error(f"PDF processing error: {exc}")
-
-    if st.session_state.chunks and not st.session_state.index_built:
-        try:
-            with st.spinner("Building vector index…"):
-                embedding_svc = EmbeddingService(
-                    api_key=config.openai_api_key,
-                    model=config.embedding_model,
-                )
-                texts = [chunk.text for chunk in st.session_state.chunks]
-                embeddings = embedding_svc.embed_texts(texts)
-                namespace = get_active_vector_namespace() or "default"
-                vector_store = build_vector_store(config, index_name=st.session_state.cfg_index_name)
-
-                # --- Phase 4: instrument upload with a manual span ---
-                lf = get_langfuse()
-                if lf:
-                    with lf.start_as_current_observation(
-                        name="pdf_upload_and_index",
-                        as_type="span",
-                        input={"filename": uploaded_file.name if uploaded_file else namespace},
-                    ):
-                        vector_store.upsert_chunks(st.session_state.chunks, embeddings, namespace=namespace)
-                        st.session_state.index_built = True
-                        st.session_state.vector_namespace = namespace
-                        # Capture index metadata after a successful upsert
-                        try:
-                            ns_stats = vector_store.describe_namespace(namespace)
-                            lf.update_current_span(
-                                metadata={
-                                    "index_name": st.session_state.cfg_index_name,
-                                    "namespace": namespace,
-                                    "index_status": "ready",
-                                    "chunks_in_index": ns_stats["namespace_vector_count"],
-                                    "index_dimension": ns_stats["dimension"],
-                                }
-                            )
-                        except VectorStoreError:
-                            lf.update_current_span(
-                                metadata={
-                                    "index_name": st.session_state.cfg_index_name,
-                                    "namespace": namespace,
-                                    "index_status": "upserted",
-                                    "chunks_in_index": len(st.session_state.chunks),
-                                }
-                            )
-                else:
-                    vector_store.upsert_chunks(st.session_state.chunks, embeddings, namespace=namespace)
-                    st.session_state.index_built = True
-                    st.session_state.vector_namespace = namespace
-                # --- End Phase 4 upload span ---
-
-        except (EmbeddingServiceError, VectorStoreError, Exception) as exc:  # noqa: BLE001
-            st.error(f"Index build error: {exc}")
-
-    if st.session_state.chunks:
-        st.info(f"📄 **{st.session_state.uploaded_file_name}** — {len(st.session_state.chunks)} chunks extracted")
-        with st.expander("🔍 Index debug info", expanded=False):
-            st.write(f"Index built: {st.session_state.index_built}")
-            st.write(f"Namespace: {st.session_state.vector_namespace}")
-            if st.session_state.index_built and st.session_state.vector_namespace:
-                try:
-                    namespace_stats = build_vector_store(config, index_name=st.session_state.cfg_index_name).describe_namespace(st.session_state.vector_namespace)
-                    st.write(f"Index status: ready")
-                    st.write(f"Chunks in index: {namespace_stats['namespace_vector_count']}")
-                    st.write(f"Index dimension: {namespace_stats['dimension']}")
-                except VectorStoreError as exc:
-                    st.write(f"Index status: unavailable ({exc})")
-            else:
-                st.write("Index status: not built")
-                st.write("Chunks in index: 0")
-    # --- End Phase 1 / Phase 2 ---
-
     pending_question = st.session_state.pop("pending_question", None)
     if pending_question:
         process_chat_question(config, pending_question)
@@ -579,38 +604,25 @@ def main() -> None:
         host=config.langfuse_host,
     )
 
-    # --- Phase 5: Sidebar retrieval settings ---
-    with st.sidebar:
-        st.markdown("### Retrieval settings")
-        st.session_state.cfg_index_name = st.text_input(
-            "Index name",
-            value=st.session_state.cfg_index_name,
-        )
-        st.session_state.cfg_top_k = st.number_input(
-            "Top K",
-            min_value=1,
-            max_value=20,
-            value=st.session_state.cfg_top_k,
-            step=1,
-        )
-        st.session_state.cfg_min_confidence = st.slider(
-            "Min confidence",
-            min_value=0.0,
-            max_value=1.0,
-            value=st.session_state.cfg_min_confidence,
-            step=0.01,
-        )
-    # --- End Phase 5 sidebar ---
-
     if not config.openai_api_key:
         st.warning("Set OPENAI_API_KEY to start chatting.")
         return
 
-    chat_tab, evals_tab = st.tabs(["Chat", "Evals"])
+    kb_indexed = st.session_state.index_built and bool(st.session_state.vector_namespace)
+
+    kb_tab, chat_tab, evals_tab = st.tabs(["Knowledge Base", "Assistant Chat", "Evals & Configs"])
+    with kb_tab:
+        render_knowledge_base_tab(config)
     with chat_tab:
-        render_chat_tab(config)
+        if not kb_indexed:
+            st.info("🔒 Upload and index a PDF in the **Knowledge Base** tab to unlock chat.")
+        else:
+            render_chat_tab(config)
     with evals_tab:
-        render_evals_tab()
+        if not kb_indexed:
+            st.info("🔒 Upload and index a PDF in the **Knowledge Base** tab to unlock evaluations.")
+        else:
+            render_evals_and_configs_tab(config)
 
     # Placed outside the tab blocks so Streamlit can dock it to the bottom of the viewport.
     # The on_submit callback only enqueues the question; it is consumed inside render_chat_tab.
