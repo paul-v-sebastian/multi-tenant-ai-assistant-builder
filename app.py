@@ -28,31 +28,6 @@ _JUDGE_SYSTEM_PROMPT = (
 _GLOBAL_CSS = """
 <style>
 .block-container { max-width: 900px; padding-top: 2rem; }
-/* Supabase connection indicator — pinned top-right */
-#supabase-indicator {
-    position: fixed;
-    top: 0.6rem;
-    right: 1.2rem;
-    z-index: 9999;
-    display: flex;
-    align-items: center;
-    gap: 0.4rem;
-    background: rgba(255,255,255,0.85);
-    border-radius: 999px;
-    padding: 0.15rem 0.65rem 0.15rem 0.4rem;
-    font-size: 0.75rem;
-    font-weight: 500;
-    color: #333;
-    box-shadow: 0 1px 4px rgba(0,0,0,0.15);
-    backdrop-filter: blur(4px);
-    pointer-events: none;
-}
-#supabase-indicator .dot {
-    width: 10px;
-    height: 10px;
-    border-radius: 50%;
-    flex-shrink: 0;
-}
 </style>
 """
 
@@ -618,19 +593,73 @@ def render_chat_tab(config) -> None:
 
 
 def _render_supabase_indicator() -> None:
-    """Inject a fixed top-right colour dot indicating Supabase connection status."""
+    """Inject a fixed top-right colour dot indicating Supabase connection status.
+
+    st.markdown injects HTML inside a Streamlit iframe, so ``position:fixed``
+    is anchored to that iframe rather than the browser viewport, making the
+    element invisible.  Instead we use st.components.v1.html with a small JS
+    snippet that appends the element directly to window.parent.document.body,
+    ensuring it is truly fixed to the main page.
+    """
+    import streamlit.components.v1 as components  # noqa: PLC0415 — lazy import
+
     status, message = get_supabase_status()
     colour_map = {"grey": "#9e9e9e", "red": "#e53935", "green": "#43a047"}
     label_map = {"grey": "DB: not configured", "red": "DB: error", "green": "DB: connected"}
     colour = colour_map[status]
     label = label_map[status]
-    html = (
-        f'<div id="supabase-indicator" title="{message}">'
-        f'<span class="dot" style="background:{colour};"></span>'
-        f"{label}"
-        f"</div>"
-    )
-    st.markdown(html, unsafe_allow_html=True)
+    # Escape message for safe embedding in JS string
+    safe_message = message.replace("\\", "\\\\").replace("'", "\\'").replace("\n", " ")
+    js = f"""
+<script>
+(function() {{
+    var doc = window.parent.document;
+    // Remove any previous instance so re-runs stay fresh
+    var old = doc.getElementById('supabase-indicator');
+    if (old) old.remove();
+
+    var style = doc.getElementById('supabase-indicator-style');
+    if (!style) {{
+        style = doc.createElement('style');
+        style.id = 'supabase-indicator-style';
+        style.textContent = `
+            #supabase-indicator {{
+                position: fixed;
+                top: 0.6rem;
+                right: 1.2rem;
+                z-index: 9999;
+                display: flex;
+                align-items: center;
+                gap: 0.4rem;
+                background: rgba(255,255,255,0.85);
+                border-radius: 999px;
+                padding: 0.15rem 0.65rem 0.15rem 0.4rem;
+                font-size: 0.75rem;
+                font-weight: 500;
+                color: #333;
+                box-shadow: 0 1px 4px rgba(0,0,0,0.15);
+                backdrop-filter: blur(4px);
+                pointer-events: none;
+            }}
+            #supabase-indicator .dot {{
+                width: 10px;
+                height: 10px;
+                border-radius: 50%;
+                flex-shrink: 0;
+            }}
+        `;
+        doc.head.appendChild(style);
+    }}
+
+    var el = doc.createElement('div');
+    el.id = 'supabase-indicator';
+    el.title = '{safe_message}';
+    el.innerHTML = '<span class="dot" style="background:{colour};"></span>{label}';
+    doc.body.appendChild(el);
+}})();
+</script>
+"""
+    components.html(js, height=0, scrolling=False)
 
 
 def main() -> None:
