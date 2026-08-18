@@ -411,6 +411,8 @@ def render_knowledge_base_tab(config) -> None:
                     st.session_state.index_built = True
                     st.session_state.vector_namespace = namespace
 
+                st.rerun()
+
         except (EmbeddingServiceError, VectorStoreError, Exception) as exc:  # noqa: BLE001
             st.error(f"Index build error: {exc}")
 
@@ -590,9 +592,9 @@ def render_chat_tab(config) -> None:
 
 
 def main() -> None:
-    st.set_page_config(page_title="LLM Chat", page_icon="💬", layout="centered")
+    st.set_page_config(page_title="AI Assistant Builder", page_icon="🤖", layout="centered")
     st.markdown(_GLOBAL_CSS, unsafe_allow_html=True)
-    st.title("Simple LLM Chat")
+    st.title("AI Assistant Builder")
 
     config = load_config()
     initialize_state()
@@ -618,15 +620,19 @@ def main() -> None:
             st.info("🔒 Upload and index a PDF in the **Knowledge Base** tab to unlock chat.")
         else:
             render_chat_tab(config)
+        # st.chat_input must be the last statement in this tab's scope,
+        # not nested inside any container/form/columns, so it docks to the bottom.
+        st.chat_input(
+            "Ask anything...",
+            key="chat_input_value",
+            on_submit=queue_chat_question,
+            disabled=not kb_indexed,
+        )
     with evals_tab:
         if not kb_indexed:
             st.info("🔒 Upload and index a PDF in the **Knowledge Base** tab to unlock evaluations.")
         else:
             render_evals_and_configs_tab(config)
-
-    # Placed outside the tab blocks so Streamlit can dock it to the bottom of the viewport.
-    # The on_submit callback only enqueues the question; it is consumed inside render_chat_tab.
-    st.chat_input("Ask anything...", key="chat_input_value", on_submit=queue_chat_question)
 
 
 if __name__ == "__main__":
