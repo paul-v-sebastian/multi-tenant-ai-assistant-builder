@@ -119,7 +119,7 @@ def build_vector_store(config, index_name: str | None = None) -> PineconeVectorS
 def get_active_vector_namespace() -> str | None:
     return build_tenant_namespace(
         tenant_id=st.session_state.get("tenant_id"),
-        fallback_namespace=st.session_state.get("uploaded_file_name") or "default",
+        fallback_namespace=st.session_state.get("uploaded_file_name"),
     )
 
 
@@ -143,7 +143,7 @@ def queue_chat_question() -> None:
         st.session_state["pending_question"] = question
 
 
-def process_chat_question(config, question: str) -> None:
+def process_chat_question(config, question: str, chat_type: str = "TEST_CHAT") -> None:
     st.session_state.messages.append({"role": "user", "content": question})
     try:
         lf = get_langfuse()
@@ -152,7 +152,15 @@ def process_chat_question(config, question: str) -> None:
         @observe(name="chat_turn", capture_input=False, capture_output=False)
         def _traced_chat_turn() -> None:
             if lf:
-                lf.update_current_span(input={"question": question})
+                lf.update_current_span(
+                    input={"question": question},
+                    metadata={
+                        "tenant_id": st.session_state.get("tenant_id"),
+                        "tenant_name": st.session_state.get("tenant_name"),
+                        "vector_namespace": st.session_state.get("vector_namespace"),
+                        "chat_type": chat_type,
+                    },
+                )
             _run_chat_turn(config, question, lf)
 
         _traced_chat_turn()
@@ -190,6 +198,7 @@ def _run_chat_turn(config, question: str, lf) -> None:
                         "precision": metrics["precision"],
                         "recall": metrics["recall"],
                         "scores": metrics["scores"],
+                        "chunk_ids": [m.chunk_id for m in relevant_matches],
                     }
                 )
             # --- End Phase 4 retrieval metadata ---
@@ -1014,7 +1023,7 @@ def main() -> None:
         kb_indexed = st.session_state.index_built and bool(st.session_state.vector_namespace)
         pending_question = st.session_state.pop("pending_question", None)
         if pending_question:
-            process_chat_question(config, pending_question)
+            process_chat_question(config, pending_question, chat_type="REAL_CHAT")
         for index, message in enumerate(st.session_state.messages):
             with st.chat_message(message["role"]):
                 st.markdown(message["content"])
