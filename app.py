@@ -1005,6 +1005,7 @@ def main() -> None:
         initialize_state()
         if not st.session_state.get("tenant_id"):
             _load_tenant_into_session(row)
+            _rehydrate_tenant_runtime_state(config)
         init_langfuse(
             secret_key=config.langfuse_secret_key,
             public_key=config.langfuse_public_key,
